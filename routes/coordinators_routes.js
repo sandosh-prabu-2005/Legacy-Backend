@@ -15,6 +15,8 @@ router.route("/coordinators/public").get(getAllCoordinatorsPublic);
 router.route("/coordinators").get(isAuthenticatedUser, getCollegeParticipants);
 
 // Alternative route to get actual coordinators (users with coordinator roles)
-router.route("/coordinators/actual").get(isAuthenticatedUser, getCollegeCoordinators);
+router
+  .route("/coordinators/actual")
+  .get(isAuthenticatedUser, getCollegeCoordinators);
 
 module.exports = router;
