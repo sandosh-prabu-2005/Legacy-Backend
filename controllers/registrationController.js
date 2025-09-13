@@ -410,47 +410,41 @@ exports.getCollegeRegistrations = catchAsyncError(async (req, res, next) => {
   let coordinators = [];
 
   // Determine if user is coordinator or super admin
-  // Let's try multiple criteria to identify coordinators
-  const isCoordinatorByFields =
-    user.isVerified && user.assignedEvent && user.club && user.role === "user";
-  const isCoordinatorByRole = user.role === "admin" && !user.isSuperAdmin;
-  const isCoordinator = isCoordinatorByFields || isCoordinatorByRole;
+  // According to requirements: ALL registered users are coordinators
+  const isCoordinator = user.isVerified; // Any verified/registered user is a coordinator
   const isSuperAdmin = user.role === "admin" && user.isSuperAdmin;
 
+  console.log(`[DEBUG] User role detection:`, {
+    userId: userId.toString(),
+    userEmail: user.email,
+    userCollege: user.college,
+    isVerified: user.isVerified,
+    userRole: user.role,
+    isSuperAdmin,
+    isCoordinator,
+    finalRole: isSuperAdmin ? "admin" : isCoordinator ? "coordinator" : "user",
+  });
+
   if (isCoordinator || isSuperAdmin) {
-    // Try both criteria for finding coordinators
-    let coordinatorQuery1 = {
+    // Find all verified users (coordinators) from the same college
+    const coordinatorQuery = {
       college: user.college,
-      role: "user",
-      isVerified: true,
-      assignedEvent: { $exists: true },
-      club: { $exists: true },
+      isVerified: true, // Only verified users are coordinators
     };
 
-    let coordinatorQuery2 = {
-      college: user.college,
-      role: "admin",
-      isSuperAdmin: false,
-      isVerified: true,
-    };
-
-    // First, find all coordinators from the same college using both criteria
-    const coordinators1 = await User.find(coordinatorQuery1).select(
-      "_id name email club assignedEvent"
-    );
-    const coordinators2 = await User.find(coordinatorQuery2).select(
-      "_id name email club assignedEvent"
+    // Get all coordinators from the same college
+    coordinators = await User.find(coordinatorQuery).select(
+      "_id name email club assignedEvent role"
     );
 
-    // Combine and deduplicate coordinators
-    const allCoordinators = [...coordinators1, ...coordinators2];
-    const uniqueCoordinators = allCoordinators.filter(
-      (coord, index, self) =>
-        index ===
-        self.findIndex((c) => c._id.toString() === coord._id.toString())
+    console.log(
+      `[DEBUG] Found ${coordinators.length} coordinators for college ${user.college}:`,
+      coordinators.map((c) => ({
+        id: c._id.toString(),
+        name: c.name,
+        email: c.email,
+      }))
     );
-
-    coordinators = uniqueCoordinators;
 
     const coordinatorIds = coordinators.map((coord) => coord._id);
 
@@ -462,6 +456,10 @@ exports.getCollegeRegistrations = catchAsyncError(async (req, res, next) => {
     })
       .populate("registrantId", "name email")
       .sort({ registrationDate: -1 });
+
+    console.log(
+      `[DEBUG] Found ${registrations.length} total registrations for college ${user.college}`
+    );
   } else {
     // For regular users: Only show registrations for the user's college (existing behavior)
     registrations = await EventRegistration.find({
@@ -576,6 +574,15 @@ exports.getCollegeRegistrations = catchAsyncError(async (req, res, next) => {
     } else {
       stats.byEvent[reg.eventName] = 1;
     }
+  });
+
+  console.log(`[DEBUG] Response summary:`, {
+    totalRegistrations: registrations.length,
+    soloCount: soloRegistrations.length,
+    teamCount: teamRegistrations.length,
+    userRole: isSuperAdmin ? "admin" : isCoordinator ? "coordinator" : "user",
+    coordinatorsCount: coordinators.length,
+    currentUserId: userId.toString(),
   });
 
   res.status(200).json({
