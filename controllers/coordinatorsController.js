@@ -3,6 +3,59 @@ const ErrorHandler = require("../utils/errorHandler");
 const EventRegistration = require("../models/eventRegistrations");
 const User = require("../models/users");
 
+// Public endpoint to get all coordinators (no authentication required)
+exports.getAllCoordinatorsPublic = catchAsyncError(async (req, res, next) => {
+  console.log('Fetching all coordinators publicly (no auth)');
+
+  try {
+    // Fetch all verified users from all colleges
+    const coordinators = await User.find({
+      isVerified: true,
+    })
+      .select('name college dept year level degree role')
+      .sort({ college: 1, name: 1 }); // Sort by college first, then by name
+
+    console.log('Public query executed, found coordinators:', coordinators.length);
+
+    // Transform data to match the frontend structure but without sensitive info
+    const formattedCoordinators = coordinators.map(coordinator => ({
+      _id: coordinator._id,
+      name: coordinator.name,
+      college: coordinator.college,
+      degree: coordinator.degree || 'Not specified',
+      department: coordinator.dept || 'Not specified',
+      year: coordinator.year || 'Not specified',
+      level: coordinator.level || 'Not specified',
+      role: coordinator.role || 'user'
+    }));
+
+    // Remove duplicates based on name and college combination
+    const uniqueCoordinators = formattedCoordinators.filter((coordinator, index, self) => {
+      return index === self.findIndex(p => 
+        p.name === coordinator.name && 
+        p.college === coordinator.college
+      );
+    });
+
+    console.log(`Found ${uniqueCoordinators.length} unique coordinators from all colleges`);
+
+    // Get list of unique colleges for filtering
+    const colleges = [...new Set(uniqueCoordinators.map(c => c.college))].sort();
+
+    res.status(200).json({
+      success: true,
+      message: `Found ${uniqueCoordinators.length} coordinators from all colleges`,
+      coordinators: uniqueCoordinators,
+      colleges: colleges,
+      totalCount: uniqueCoordinators.length
+    });
+
+  } catch (error) {
+    console.error("Error fetching public coordinators:", error);
+    return next(new ErrorHandler("Failed to fetch coordinators data", 500));
+  }
+});
+
 // Get all coordinators from all colleges
 exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
   const userId = req.user._id;
