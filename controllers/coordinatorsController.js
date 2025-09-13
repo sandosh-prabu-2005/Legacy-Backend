@@ -3,7 +3,7 @@ const ErrorHandler = require("../utils/errorHandler");
 const EventRegistration = require("../models/eventRegistrations");
 const User = require("../models/users");
 
-// Get participants from the same college as the logged-in user
+// Get coordinators from the same college as the logged-in user
 exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
   const userId = req.user._id;
 
@@ -13,71 +13,73 @@ exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
     return next(new ErrorHandler("User not found", 404));
   }
 
-  console.log(`Fetching participants for college: ${user.college} (User: ${user.name})`);
+  console.log(`Fetching coordinators for college: ${user.college} (User: ${user.name})`);
 
   try {
-    // Fetch all event registrations from the same college
+    // Fetch all users from the same college
     console.log('Querying college:', user.college);
-    const participants = await EventRegistration.find({
-      collegeName: user.college,
-      isActive: true,
+    const coordinators = await User.find({
+      college: user.college,
+      isVerified: true,
     })
-      .sort({ participantName: 1 });
+      .select('name college dept year level degree phoneNumber email role')
+      .sort({ name: 1 });
 
-    console.log('Query executed, found participants:', participants.length);
+    console.log('Query executed, found coordinators:', coordinators.length);
 
     // Transform data to match the frontend structure expected by CoordinatorsPage
-    const formattedParticipants = participants.map(participant => {
-      const participantData = {
-        _id: participant._id,
-        name: participant.participantName,
-        college: participant.collegeName,
-        mobile: participant.participantMobile || 'Not provided',
-        event: participant.eventName || 'N/A',
-        degree: participant.degree || 'Not specified',
-        department: participant.department || participant.customDepartment || 'Not specified',
-        year: participant.year || 'Not specified',
-        level: participant.level || 'Not specified',
-        registrationDate: participant.registrationDate
+    const formattedCoordinators = coordinators.map(coordinator => {
+      const coordinatorData = {
+        _id: coordinator._id,
+        name: coordinator.name,
+        college: coordinator.college,
+        mobile: coordinator.phoneNumber || 'Not provided',
+        event: 'N/A', // Users don't have specific events, so we'll show N/A
+        degree: coordinator.degree || 'Not specified', // degree field contains BTech/BE/etc
+        department: coordinator.dept || 'Not specified',
+        year: coordinator.year || 'Not specified',
+        level: coordinator.level || 'Not specified', // level field contains UG/PG
+        email: coordinator.email,
+        role: coordinator.role
       };
       
-      // Debug individual participant data (first few only)
-      if (participants.indexOf(participant) < 3) {
-        console.log('Sample participant data:', participantData);
+      // Debug individual coordinator data (first few only)
+      if (coordinators.indexOf(coordinator) < 3) {
+        console.log('Sample coordinator data:', coordinatorData);
       }
       
-      return participantData;
+      return coordinatorData;
     });
 
-    console.log(`Raw participants count: ${participants.length}, after formatting: ${formattedParticipants.length}`);
+    console.log(`Raw coordinators count: ${coordinators.length}, after formatting: ${formattedCoordinators.length}`);
     
-    // Debug: Log sample participant data
-    if (participants.length > 0) {
-      console.log('Sample participant data:', JSON.stringify(participants[0], null, 2));
-      console.log('Sample formatted data:', JSON.stringify(formattedParticipants[0], null, 2));
+    // Debug: Log sample coordinator data
+    if (coordinators.length > 0) {
+      console.log('Sample coordinator data:', JSON.stringify(coordinators[0], null, 2));
+      console.log('Sample formatted data:', JSON.stringify(formattedCoordinators[0], null, 2));
     }
 
-    // Remove duplicates based on name and mobile combination
-    const uniqueParticipants = formattedParticipants.filter((participant, index, self) => {
+    // Remove duplicates based on name and email combination (users should be unique by email)
+    const uniqueCoordinators = formattedCoordinators.filter((coordinator, index, self) => {
       return index === self.findIndex(p => 
-        p.name === participant.name && 
-        p.mobile === participant.mobile
+        p.name === coordinator.name && 
+        p.email === coordinator.email
       );
     });
 
-    console.log(`Found ${uniqueParticipants.length} unique participants from ${user.college}`);
+    console.log(`Found ${uniqueCoordinators.length} unique coordinators from ${user.college}`);
 
     res.status(200).json({
       success: true,
-      message: `Found ${uniqueParticipants.length} participants from ${user.college}`,
-      coordinators: uniqueParticipants, // Using 'coordinators' key to match frontend expectation
+      message: `Found ${uniqueCoordinators.length} coordinators from ${user.college}`,
+      coordinators: uniqueCoordinators, // Using 'coordinators' key to match frontend expectation
       collegeName: user.college,
-      totalCount: uniqueParticipants.length
+      totalCount: uniqueCoordinators.length
     });
 
   } catch (error) {
-    console.error("Error fetching college participants:", error);
-    return next(new ErrorHandler("Failed to fetch participants data", 500));
+    console.error("Error fetching college coordinators:", error);
+    return next(new ErrorHandler("Failed to fetch coordinators data", 500));
   }
 });
 
