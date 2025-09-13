@@ -14,6 +14,7 @@ const cookieParser = require("cookie-parser");
 const admin = require("./routes/admin_routes");
 const adminInvite = require("./routes/adminInvite_routes");
 const payment = require("./routes/payment_routes");
+const coordinators = require("./routes/coordinators_routes");
 
 const corsOptions = {
   origin: function (origin, callback) {
@@ -70,6 +71,7 @@ app.use("/api/v1", registration);
 app.use("/api/v1/registration", registration);
 app.use("/api/v1/teams", team);
 app.use("/api/v1", payment);
+app.use("/api/v1", coordinators);
 
 app.use(errorMiddleware);
 module.exports = app;
