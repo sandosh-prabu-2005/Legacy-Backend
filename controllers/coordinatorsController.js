@@ -17,24 +17,45 @@ exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
 
   try {
     // Fetch all event registrations from the same college
+    console.log('Querying college:', user.college);
     const participants = await EventRegistration.find({
       collegeName: user.college,
       isActive: true,
     })
-      .select('participantName participantMobile collegeName eventName registrationDate')
       .sort({ participantName: 1 });
 
+    console.log('Query executed, found participants:', participants.length);
+
     // Transform data to match the frontend structure expected by CoordinatorsPage
-    const formattedParticipants = participants.map(participant => ({
-      _id: participant._id,
-      name: participant.participantName,
-      college: participant.collegeName,
-      mobile: participant.participantMobile || 'Not provided',
-      event: participant.eventName || 'N/A',
-      registrationDate: participant.registrationDate
-    }));
+    const formattedParticipants = participants.map(participant => {
+      const participantData = {
+        _id: participant._id,
+        name: participant.participantName,
+        college: participant.collegeName,
+        mobile: participant.participantMobile || 'Not provided',
+        event: participant.eventName || 'N/A',
+        degree: participant.degree || 'Not specified',
+        department: participant.department || participant.customDepartment || 'Not specified',
+        year: participant.year || 'Not specified',
+        level: participant.level || 'Not specified',
+        registrationDate: participant.registrationDate
+      };
+      
+      // Debug individual participant data (first few only)
+      if (participants.indexOf(participant) < 3) {
+        console.log('Sample participant data:', participantData);
+      }
+      
+      return participantData;
+    });
 
     console.log(`Raw participants count: ${participants.length}, after formatting: ${formattedParticipants.length}`);
+    
+    // Debug: Log sample participant data
+    if (participants.length > 0) {
+      console.log('Sample participant data:', JSON.stringify(participants[0], null, 2));
+      console.log('Sample formatted data:', JSON.stringify(formattedParticipants[0], null, 2));
+    }
 
     // Remove duplicates based on name and mobile combination
     const uniqueParticipants = formattedParticipants.filter((participant, index, self) => {
