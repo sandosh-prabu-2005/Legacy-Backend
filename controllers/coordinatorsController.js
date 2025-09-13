@@ -3,27 +3,26 @@ const ErrorHandler = require("../utils/errorHandler");
 const EventRegistration = require("../models/eventRegistrations");
 const User = require("../models/users");
 
-// Get coordinators from the same college as the logged-in user
+// Get all coordinators from all colleges
 exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
   const userId = req.user._id;
 
-  // Get user details to find their college
+  // Get user details for logging purposes
   const user = await User.findById(userId);
   if (!user) {
     return next(new ErrorHandler("User not found", 404));
   }
 
-  console.log(`Fetching coordinators for college: ${user.college} (User: ${user.name})`);
+  console.log(`Fetching all coordinators (User: ${user.name})`);
 
   try {
-    // Fetch all users from the same college
-    console.log('Querying college:', user.college);
+    // Fetch all verified users from all colleges
+    console.log('Querying all colleges for verified users');
     const coordinators = await User.find({
-      college: user.college,
       isVerified: true,
     })
       .select('name college dept year level degree phoneNumber email role')
-      .sort({ name: 1 });
+      .sort({ college: 1, name: 1 }); // Sort by college first, then by name
 
     console.log('Query executed, found coordinators:', coordinators.length);
 
@@ -67,13 +66,17 @@ exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
       );
     });
 
-    console.log(`Found ${uniqueCoordinators.length} unique coordinators from ${user.college}`);
+    console.log(`Found ${uniqueCoordinators.length} unique coordinators from all colleges`);
+
+    // Get list of unique colleges for filtering
+    const colleges = [...new Set(uniqueCoordinators.map(c => c.college))].sort();
 
     res.status(200).json({
       success: true,
-      message: `Found ${uniqueCoordinators.length} coordinators from ${user.college}`,
+      message: `Found ${uniqueCoordinators.length} coordinators from all colleges`,
       coordinators: uniqueCoordinators, // Using 'coordinators' key to match frontend expectation
-      collegeName: user.college,
+      colleges: colleges, // List of all colleges for filter dropdown
+      userCollege: user.college, // User's college for default filtering
       totalCount: uniqueCoordinators.length
     });
 
