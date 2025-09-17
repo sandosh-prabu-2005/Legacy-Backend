@@ -6,6 +6,8 @@ const {
   getCollegeRegistrations,
   updateSoloRegistration,
   updateTeamRegistrationMember,
+  getCollegeEventsForEdit,
+  getRegistrationDetails,
 } = require("../controllers/registrationController");
 const { isAuthenticatedUser } = require("../middlewares/authenticate");
 const router = express.Router();
@@ -17,6 +19,12 @@ router
   .route("/direct")
   .post(isAuthenticatedUser, registerEventWithParticipants);
 router.route("/college").get(isAuthenticatedUser, getCollegeRegistrations);
+router
+  .route("/college/events")
+  .get(isAuthenticatedUser, getCollegeEventsForEdit);
+router
+  .route("/:registrationId/details")
+  .get(isAuthenticatedUser, getRegistrationDetails);
 
 // Update routes
 router

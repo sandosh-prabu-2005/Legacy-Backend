@@ -639,6 +639,7 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
     level,
     gender,
     mobile,
+    eventId,
   } = req.body;
 
   // Find the registration
@@ -652,6 +653,66 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
     return next(
       new ErrorHandler("You can only edit participants you registered", 403)
     );
+  }
+
+  const originalEventId = registration.eventId;
+
+  // If event is being changed, validate the new event
+  if (eventId && eventId !== originalEventId.toString()) {
+    // Find the new event
+    const newEvent = await Event.findById(eventId);
+    if (!newEvent) {
+      return next(new ErrorHandler("New event not found", 404));
+    }
+
+    // Check if event is active and not archived
+    if (!newEvent.isActive || newEvent.isArchived) {
+      return next(
+        new ErrorHandler(
+          "Selected event is not available for registration",
+          400
+        )
+      );
+    }
+
+    // Check if user is already registered for the new event
+    const existingRegistration = await isUserRegisteredForEvent(
+      userId,
+      eventId
+    );
+    if (existingRegistration) {
+      return next(
+        new ErrorHandler("You are already registered for this event", 400)
+      );
+    }
+
+    // Update event-related fields
+    registration.eventId = eventId;
+    registration.eventName = newEvent.event_name;
+    registration.eventType = newEvent.event_type;
+
+    // Remove from old event's applications if it exists
+    if (originalEventId) {
+      const oldEvent = await Event.findById(originalEventId);
+      if (oldEvent) {
+        oldEvent.applications = oldEvent.applications.filter(
+          (app) =>
+            !(
+              app.userId &&
+              app.userId.toString() === userId.toString() &&
+              !app.teamId
+            )
+        );
+        await oldEvent.save();
+      }
+    }
+
+    // Add to new event's applications
+    newEvent.applications.push({
+      userId,
+      appliedAt: new Date(),
+    });
+    await newEvent.save();
   }
 
   // Update the registration
@@ -672,6 +733,7 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
     success: true,
     message: "Participant details updated successfully",
     registration,
+    eventChanged: eventId && eventId !== originalEventId.toString(),
   });
 });
 
@@ -729,3 +791,134 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     });
   }
 );
+
+// Get events available for college editing (all events the college has registrations for + available events)
+exports.getCollegeEventsForEdit = catchAsyncError(async (req, res, next) => {
+  const userId = req.user._id;
+
+  // Get user details to find their college
+  const user = await User.findById(userId);
+  if (!user) {
+    return next(new ErrorHandler("User not found", 404));
+  }
+
+  try {
+    // Get all active events
+    const allEvents = await Event.find({
+      isActive: true,
+      isArchived: false,
+    }).select("_id event_name event_type description");
+
+    // Get all events that the college has registrations for
+    const collegeRegistrations = await EventRegistration.find({
+      collegeName: user.college,
+      isActive: true,
+    }).distinct("eventId");
+
+    // Also get team events from Teams collection
+    const collegeTeamEvents = await Teams.find({
+      collegeName: user.college,
+      isRegistered: true,
+    }).distinct("eventId");
+
+    // Combine all event IDs that the college has registered for
+    const registeredEventIds = [
+      ...new Set([
+        ...collegeRegistrations.map((id) => id.toString()),
+        ...collegeTeamEvents.map((id) => id.toString()),
+      ]),
+    ];
+
+    // Format events with additional info
+    const formattedEvents = allEvents.map((event) => ({
+      _id: event._id,
+      name: event.event_name,
+      event_name: event.event_name,
+      event_type: event.event_type,
+      description: event.description,
+      isRegisteredByCollege: registeredEventIds.includes(event._id.toString()),
+      displayName: `${event.event_name} (${event.event_type.toUpperCase()})`,
+    }));
+
+    // Sort events: college registered events first, then available events
+    formattedEvents.sort((a, b) => {
+      if (a.isRegisteredByCollege && !b.isRegisteredByCollege) return -1;
+      if (!a.isRegisteredByCollege && b.isRegisteredByCollege) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    res.status(200).json({
+      success: true,
+      events: formattedEvents,
+      message: "College events fetched successfully",
+    });
+  } catch (error) {
+    console.error("Error fetching college events:", error);
+    return next(new ErrorHandler("Failed to fetch events", 500));
+  }
+});
+
+// Get detailed registration info for editing (including all participant fields)
+exports.getRegistrationDetails = catchAsyncError(async (req, res, next) => {
+  const { registrationId } = req.params;
+  const userId = req.user._id;
+
+  try {
+    // First check if it's a solo registration
+    const soloRegistration = await EventRegistration.findById(registrationId)
+      .populate("registrantId", "name email college mobile")
+      .populate("eventId", "event_name event_type");
+
+    if (soloRegistration) {
+      // Check if user has permission to view this registration
+      const user = await User.findById(userId);
+      if (
+        soloRegistration.collegeName !== user.college &&
+        user.role !== "admin"
+      ) {
+        return next(
+          new ErrorHandler(
+            "You don't have permission to view this registration",
+            403
+          )
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        registration: soloRegistration,
+        type: "solo",
+      });
+    }
+
+    // If not found as solo, check if it's a team registration
+    const teamRegistration = await Teams.findById(registrationId)
+      .populate("registrantId", "name email college mobile")
+      .populate("eventId", "event_name event_type")
+      .populate("members.userId", "name email mobile");
+
+    if (teamRegistration) {
+      // Check if user has permission to view this team
+      const user = await User.findById(userId);
+      if (
+        teamRegistration.collegeName !== user.college &&
+        user.role !== "admin"
+      ) {
+        return next(
+          new ErrorHandler("You don't have permission to view this team", 403)
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        registration: teamRegistration,
+        type: "team",
+      });
+    }
+
+    return next(new ErrorHandler("Registration not found", 404));
+  } catch (error) {
+    console.error("Error fetching registration details:", error);
+    return next(new ErrorHandler("Failed to fetch registration details", 500));
+  }
+});

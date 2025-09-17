@@ -10,6 +10,7 @@ const {
   signOutUser,
   findUser,
   loadUser,
+  getUserById,
   getYears,
   searchUsers,
   getUserRegistrations,
@@ -28,6 +29,7 @@ router.route("/user/signin").post(signinUser);
 router.route("/user/signout").get(signOutUser);
 router.route("/user/find").post(isAuthenticatedUser, findUser);
 router.route("/user/load").get(isAuthenticatedUser, loadUser);
+router.route("/user/:userId").get(isAuthenticatedUser, getUserById);
 router
   .route("/user/registrations")
   .get(isAuthenticatedUser, getUserRegistrations);

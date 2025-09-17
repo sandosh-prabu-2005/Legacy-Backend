@@ -569,6 +569,32 @@ const changePassword = catchAsyncError(async (req, res, next) => {
   });
 });
 
+// Get user by ID - for populating edit forms
+const getUserById = catchAsyncError(async (req, res, next) => {
+  const { userId } = req.params;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: "User ID is required",
+    });
+  }
+
+  const user = await UserModel.findById(userId).select("-password");
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: "User not found",
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    user,
+    message: "User found",
+  });
+});
+
 module.exports = {
   signUpUser,
   verifyEmail,
@@ -580,6 +606,7 @@ module.exports = {
   signOutUser,
   findUser,
   loadUser,
+  getUserById,
   getYears,
   searchUsers,
   getUserRegistrations,
