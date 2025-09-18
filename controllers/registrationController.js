@@ -763,10 +763,10 @@ exports.updateTeamRegistrationMember = catchAsyncError(
       return next(new ErrorHandler("Team not found", 404));
     }
 
-    // Check if the current user is the one who registered this team
-    if (team.registrantId.toString() !== userId.toString()) {
+    // Check if the current user is the one who registered this team or is the team leader
+    if (team.registeredBy && team.registeredBy.toString() !== userId.toString() && team.leader.toString() !== userId.toString()) {
       return next(
-        new ErrorHandler("You can only edit teams you registered", 403)
+        new ErrorHandler("You can only edit teams you registered or lead", 403)
       );
     }
 
@@ -792,6 +792,73 @@ exports.updateTeamRegistrationMember = catchAsyncError(
       success: true,
       message: "Team member details updated successfully",
       team,
+    });
+  }
+);
+
+// Remove team registration member
+exports.removeTeamRegistrationMember = catchAsyncError(
+  async (req, res, next) => {
+    const { teamId, memberId } = req.params;
+    const userId = req.user._id;
+
+    console.log("removeTeamRegistrationMember called with:", { teamId, memberId, userId: userId.toString() });
+
+    // Find the member's registration document
+    const memberRegistration = await EventRegistration.findById(memberId);
+    if (!memberRegistration) {
+      return next(new ErrorHandler("Member registration not found", 404));
+    }
+
+    // Check if the current user has permission to remove this member
+    // Allow if: user is the registrant of this member OR user is a coordinator/admin
+    if (memberRegistration.registrantId.toString() !== userId.toString()) {
+      // For coordinators/admins, we should check user role here
+      // For now, let's allow if they're from the same college
+      const currentUser = await User.findById(userId);
+      if (!currentUser || currentUser.collegeName !== memberRegistration.collegeName) {
+        return next(
+          new ErrorHandler("You can only remove members you registered or from your college", 403)
+        );
+      }
+    }
+
+    // Get the event details to check minTeamSize
+    const event = await Event.findById(memberRegistration.eventId);
+    if (!event) {
+      return next(new ErrorHandler("Event not found", 404));
+    }
+
+    // Check how many team members exist for this team/event combination
+    const teamMembers = await EventRegistration.find({
+      teamId: memberRegistration.teamId,
+      eventId: memberRegistration.eventId,
+      isActive: true
+    });
+
+    // Check if this would leave the team with less than minimum required members
+    const minTeamSize = event.minTeamSize || 1;
+    if (teamMembers.length <= minTeamSize) {
+      return next(new ErrorHandler(`Cannot remove member - team must have at least ${minTeamSize} member${minTeamSize > 1 ? 's' : ''} for this event`, 400));
+    }
+
+    // Remove the member by setting isActive to false (soft delete)
+    memberRegistration.isActive = false;
+    await memberRegistration.save();
+
+    // Alternative: Hard delete if preferred
+    // await EventRegistration.findByIdAndDelete(memberId);
+
+    res.status(200).json({
+      success: true,
+      message: `${memberRegistration.participantName} has been removed from the team successfully`,
+      removedMember: {
+        _id: memberRegistration._id,
+        participantName: memberRegistration.participantName,
+        participantEmail: memberRegistration.participantEmail,
+        teamName: memberRegistration.teamName,
+        eventName: memberRegistration.eventName
+      },
     });
   }
 );
@@ -974,13 +1041,14 @@ exports.updateTeamRegistration = catchAsyncError(async (req, res, next) => {
       console.log(`Team name update result:`, teamNameUpdateResult);
     }
 
-    // Update each member's details
-    const updatePromises = members.map(async (member) => {
-      if (!member._id) {
-        console.warn("Member without _id found:", member);
-        return null;
-      }
+    // Separate existing members from new members
+    const existingMembers = members.filter(member => member._id);
+    const newMembers = members.filter(member => !member._id);
 
+    console.log(`Processing ${existingMembers.length} existing members and ${newMembers.length} new members`);
+
+    // Update existing members
+    const updatePromises = existingMembers.map(async (member) => {
       const updateData = {
         participantName: member.participantName,
         participantEmail: member.participantEmail,
@@ -992,7 +1060,7 @@ exports.updateTeamRegistration = catchAsyncError(async (req, res, next) => {
         gender: member.gender,
       };
 
-      console.log(`Updating member ${member._id} with data:`, updateData);
+      console.log(`Updating existing member ${member._id} with data:`, updateData);
 
       return EventRegistration.findByIdAndUpdate(
         member._id,
@@ -1001,16 +1069,52 @@ exports.updateTeamRegistration = catchAsyncError(async (req, res, next) => {
       );
     });
 
-    const updateResults = await Promise.all(updatePromises);
-    const successfulUpdates = updateResults.filter(result => result !== null);
+    // Create new members
+    const createPromises = newMembers.map(async (member) => {
+      const newRegistrationData = {
+        eventId: firstRegistration.eventId,
+        eventName: firstRegistration.eventName,
+        eventType: firstRegistration.eventType,
+        teamId: teamId,
+        teamName: teamName && teamName.trim() ? teamName.trim() : firstRegistration.teamName,
+        registrantId: userId, // The user creating this new member
+        registrantEmail: user.email,
+        participantName: member.participantName,
+        participantEmail: member.participantEmail,
+        participantMobile: member.participantMobile,
+        level: member.level,
+        degree: member.degree,
+        department: member.department,
+        year: member.year,
+        gender: member.gender,
+        collegeName: firstRegistration.collegeName,
+        collegeCity: firstRegistration.collegeCity,
+        collegeState: firstRegistration.collegeState,
+        registrationType: "direct",
+        isActive: true,
+      };
 
-    console.log(`Updated ${successfulUpdates.length} team members successfully`);
+      console.log(`Creating new member with data:`, newRegistrationData);
+
+      return EventRegistration.create(newRegistrationData);
+    });
+
+    // Execute all updates and creates
+    const updateResults = await Promise.all(updatePromises);
+    const createResults = await Promise.all(createPromises);
+    
+    const successfulUpdates = updateResults.filter(result => result !== null);
+    const successfulCreates = createResults.filter(result => result !== null);
+
+    console.log(`Updated ${successfulUpdates.length} existing members and created ${successfulCreates.length} new members successfully`);
 
     res.status(200).json({
       success: true,
-      message: `Team "${teamName}" updated successfully`,
+      message: `Team "${teamName || firstRegistration.teamName}" updated successfully`,
       updatedMembers: successfulUpdates.length,
-      totalMembers: members.length,
+      createdMembers: successfulCreates.length,
+      totalMembers: successfulUpdates.length + successfulCreates.length,
+      requestedMembers: members.length,
     });
 
   } catch (error) {

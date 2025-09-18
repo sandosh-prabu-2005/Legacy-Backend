@@ -6,6 +6,7 @@ const {
   getCollegeRegistrations,
   updateSoloRegistration,
   updateTeamRegistrationMember,
+  removeTeamRegistrationMember,
   updateTeamRegistration,
   getCollegeEventsForEdit,
   getRegistrationDetails,
@@ -36,6 +37,7 @@ router
   .put(isAuthenticatedUser, updateTeamRegistration);
 router
   .route("/team/:teamId/member/:memberId")
-  .put(isAuthenticatedUser, updateTeamRegistrationMember);
+  .put(isAuthenticatedUser, updateTeamRegistrationMember)
+  .delete(isAuthenticatedUser, removeTeamRegistrationMember);
 
 module.exports = router;
