@@ -633,14 +633,16 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
   const {
     participantName,
     participantEmail,
+    participantMobile,
     department,
     degree,
     year,
     level,
     gender,
-    mobile,
     eventId,
   } = req.body;
+
+  console.log("updateSoloRegistration called with:", { registrationId, userId: userId.toString(), body: req.body });
 
   // Find the registration
   const registration = await EventRegistration.findById(registrationId);
@@ -725,7 +727,7 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
   registration.year = year || registration.year;
   registration.level = level || registration.level;
   registration.gender = gender || registration.gender;
-  registration.mobile = mobile || registration.mobile;
+  registration.participantMobile = participantMobile || registration.participantMobile;
 
   await registration.save();
 
@@ -745,13 +747,15 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     const {
       participantName,
       participantEmail,
+      participantMobile,
       department,
       degree,
       year,
       level,
       gender,
-      mobile,
     } = req.body;
+
+    console.log("updateTeamRegistrationMember called with:", { teamId, memberId, userId: userId.toString(), body: req.body });
 
     // Find the team
     const team = await Teams.findById(teamId);
@@ -780,7 +784,7 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     member.year = year || member.year;
     member.level = level || member.level;
     member.gender = gender || member.gender;
-    member.mobile = mobile || member.mobile;
+    member.participantMobile = participantMobile || member.participantMobile;
 
     await team.save();
 
@@ -920,5 +924,97 @@ exports.getRegistrationDetails = catchAsyncError(async (req, res, next) => {
   } catch (error) {
     console.error("Error fetching registration details:", error);
     return next(new ErrorHandler("Failed to fetch registration details", 500));
+  }
+});
+
+// Update team registration (all members and team name)
+exports.updateTeamRegistration = catchAsyncError(async (req, res, next) => {
+  const { teamId } = req.params;
+  const userId = req.user._id;
+  const { teamName, members } = req.body;
+
+    console.log("updateTeamRegistration called with:", { teamId, teamName, membersCount: members?.length });
+    console.log("Full request body:", req.body);  // Find all registrations for this team
+  const teamRegistrations = await EventRegistration.find({ 
+    teamId: teamId,
+    isActive: true 
+  });
+
+  console.log(`Found ${teamRegistrations.length} team registrations for teamId: ${teamId}`);
+
+  if (!teamRegistrations || teamRegistrations.length === 0) {
+    return next(new ErrorHandler("Team not found", 404));
+  }
+
+  // Check if user has permission to update this team
+  const user = await User.findById(userId);
+  const firstRegistration = teamRegistrations[0];
+  
+  // Check if user is the registrant or if they're from the same college and are coordinator/admin
+  const isRegistrant = firstRegistration.registrantId.toString() === userId.toString();
+  const isSameCollege = firstRegistration.collegeName === user.college;
+  const hasPermission = isRegistrant || (isSameCollege && (user.isVerified || user.role === "admin"));
+
+  if (!hasPermission) {
+    return next(new ErrorHandler("You don't have permission to update this team", 403));
+  }
+
+  try {
+    // Validate members array
+    if (!members || !Array.isArray(members)) {
+      return next(new ErrorHandler("Members array is required", 400));
+    }
+
+    // Update team name for all registrations of this team
+    if (teamName && teamName.trim()) {
+      const teamNameUpdateResult = await EventRegistration.updateMany(
+        { teamId: teamId, isActive: true },
+        { teamName: teamName.trim() }
+      );
+      console.log(`Team name update result:`, teamNameUpdateResult);
+    }
+
+    // Update each member's details
+    const updatePromises = members.map(async (member) => {
+      if (!member._id) {
+        console.warn("Member without _id found:", member);
+        return null;
+      }
+
+      const updateData = {
+        participantName: member.participantName,
+        participantEmail: member.participantEmail,
+        participantMobile: member.participantMobile,
+        level: member.level,
+        degree: member.degree,
+        department: member.department,
+        year: member.year,
+        gender: member.gender,
+      };
+
+      console.log(`Updating member ${member._id} with data:`, updateData);
+
+      return EventRegistration.findByIdAndUpdate(
+        member._id,
+        updateData,
+        { new: true }
+      );
+    });
+
+    const updateResults = await Promise.all(updatePromises);
+    const successfulUpdates = updateResults.filter(result => result !== null);
+
+    console.log(`Updated ${successfulUpdates.length} team members successfully`);
+
+    res.status(200).json({
+      success: true,
+      message: `Team "${teamName}" updated successfully`,
+      updatedMembers: successfulUpdates.length,
+      totalMembers: members.length,
+    });
+
+  } catch (error) {
+    console.error("Error updating team registration:", error);
+    return next(new ErrorHandler("Failed to update team registration", 500));
   }
 });

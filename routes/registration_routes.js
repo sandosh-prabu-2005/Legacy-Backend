@@ -6,6 +6,7 @@ const {
   getCollegeRegistrations,
   updateSoloRegistration,
   updateTeamRegistrationMember,
+  updateTeamRegistration,
   getCollegeEventsForEdit,
   getRegistrationDetails,
 } = require("../controllers/registrationController");
@@ -30,6 +31,9 @@ router
 router
   .route("/solo/:registrationId")
   .put(isAuthenticatedUser, updateSoloRegistration);
+router
+  .route("/team/:teamId")
+  .put(isAuthenticatedUser, updateTeamRegistration);
 router
   .route("/team/:teamId/member/:memberId")
   .put(isAuthenticatedUser, updateTeamRegistrationMember);
