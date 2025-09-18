@@ -8,11 +8,13 @@ exports.getAllCoordinatorsPublic = catchAsyncError(async (req, res, next) => {
   console.log("Fetching all coordinators publicly (no auth)");
 
   try {
-    // Fetch all verified users from all colleges
+    // Fetch all verified users from all colleges, excluding admins and super admins
     const coordinators = await User.find({
       isVerified: true,
+      role: { $ne: "admin" }, // Exclude users with admin role
+      isSuperAdmin: { $ne: true }, // Exclude super admins
     })
-      .select("name college dept year level degree role")
+      .select("name college dept year level degree role isSuperAdmin")
       .sort({ college: 1, name: 1 }); // Sort by college first, then by name
 
     console.log(
@@ -80,18 +82,20 @@ exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
   console.log(`Fetching all coordinators (User: ${user.name})`);
 
   try {
-    // Fetch all verified users from all colleges
-    console.log("Querying all colleges for verified users");
-    const coordinators = await User.find({
+        // Fetch all verified users for all colleges, excluding admins and super admins
+    console.log("Querying all colleges for verified users (excluding admins and super admins)");
+    const allVerifiedUsers = await User.find({
       isVerified: true,
+      role: { $ne: "admin" }, // Exclude users with admin role
+      isSuperAdmin: { $ne: true }, // Exclude super admins
     })
-      .select("name college dept year level degree phoneNumber email role")
-      .sort({ college: 1, name: 1 }); // Sort by college first, then by name
+      .select("name college dept year level degree phoneNumber email role isSuperAdmin")
+      .lean(); // .lean() for better performance as we only need to read
 
-    console.log("Query executed, found coordinators:", coordinators.length);
+    console.log("Query executed, found coordinators:", allVerifiedUsers.length);
 
     // Transform data to match the frontend structure expected by CoordinatorsPage
-    const formattedCoordinators = coordinators.map((coordinator) => {
+    const formattedCoordinators = allVerifiedUsers.map((coordinator) => {
       const coordinatorData = {
         _id: coordinator._id,
         name: coordinator.name,
@@ -107,7 +111,7 @@ exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
       };
 
       // Debug individual coordinator data (first few only)
-      if (coordinators.indexOf(coordinator) < 3) {
+      if (allVerifiedUsers.indexOf(coordinator) < 3) {
         console.log("Sample coordinator data:", coordinatorData);
       }
 
@@ -115,14 +119,14 @@ exports.getCollegeParticipants = catchAsyncError(async (req, res, next) => {
     });
 
     console.log(
-      `Raw coordinators count: ${coordinators.length}, after formatting: ${formattedCoordinators.length}`
+      `Raw coordinators count: ${allVerifiedUsers.length}, after formatting: ${formattedCoordinators.length}`
     );
 
     // Debug: Log sample coordinator data
-    if (coordinators.length > 0) {
+    if (allVerifiedUsers.length > 0) {
       console.log(
         "Sample coordinator data:",
-        JSON.stringify(coordinators[0], null, 2)
+        JSON.stringify(allVerifiedUsers[0], null, 2)
       );
       console.log(
         "Sample formatted data:",
@@ -176,37 +180,20 @@ exports.getCollegeCoordinators = catchAsyncError(async (req, res, next) => {
   }
 
   try {
-    // Find coordinators from the same college using multiple criteria
-    const coordinatorQuery1 = {
+    // Find coordinators from the same college, excluding admins and super admins
+    const coordinatorQuery = {
       college: user.college,
-      role: "user",
       isVerified: true,
-      assignedEvent: { $exists: true },
-      club: { $exists: true },
+      role: { $ne: "admin" }, // Exclude users with admin role
+      isSuperAdmin: { $ne: true }, // Exclude super admins
     };
 
-    const coordinatorQuery2 = {
-      college: user.college,
-      role: "admin",
-      isSuperAdmin: false,
-      isVerified: true,
-    };
-
-    // Find coordinators using both criteria
-    const coordinators1 = await User.find(coordinatorQuery1).select(
-      "_id name email phoneNumber college club assignedEvent"
+    // Find coordinators
+    const allCoordinators = await User.find(coordinatorQuery).select(
+      "_id name email phoneNumber college club assignedEvent role isSuperAdmin"
     );
-    const coordinators2 = await User.find(coordinatorQuery2).select(
-      "_id name email phoneNumber college club assignedEvent"
-    );
-
-    // Combine and deduplicate coordinators
-    const allCoordinators = [...coordinators1, ...coordinators2];
-    const uniqueCoordinators = allCoordinators.filter(
-      (coord, index, self) =>
-        index ===
-        self.findIndex((c) => c._id.toString() === coord._id.toString())
-    );
+    // No need to deduplicate since we have a single query
+    const uniqueCoordinators = allCoordinators;
 
     // Format coordinators data for frontend
     const formattedCoordinators = uniqueCoordinators.map((coord) => ({

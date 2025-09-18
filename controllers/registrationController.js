@@ -426,10 +426,12 @@ exports.getCollegeRegistrations = catchAsyncError(async (req, res, next) => {
   });
 
   if (isCoordinator || isSuperAdmin) {
-    // Find all verified users (coordinators) from the same college
+    // Find all verified users (coordinators) from the same college, excluding admins and super admins
     const coordinatorQuery = {
       college: user.college,
       isVerified: true, // Only verified users are coordinators
+      role: { $ne: "admin" }, // Exclude users with admin role
+      isSuperAdmin: { $ne: true }, // Exclude super admins
     };
 
     // Get all coordinators from the same college
