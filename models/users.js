@@ -137,6 +137,7 @@ const UserSchema = new Schema({
   UserId: { type: String, unique: true },
   isPresent: { type: Boolean },
   isWinner: { type: Boolean },
+  tokenVersion: { type: Number, default: 0 }, // For session invalidation
 });
 
 UserSchema.pre("save", async function (next) {
@@ -151,9 +152,17 @@ UserSchema.pre("save", async function (next) {
 });
 
 UserSchema.methods.getJwtToken = function () {
-  return jwt.sign({ id: this._id, email: this.email }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_TIME,
-  });
+  return jwt.sign(
+    { 
+      id: this._id, 
+      email: this.email, 
+      tokenVersion: this.tokenVersion || 0 
+    }, 
+    process.env.JWT_SECRET, 
+    {
+      expiresIn: process.env.JWT_EXPIRES_TIME,
+    }
+  );
 };
 
 UserSchema.methods.isValidPassword = async function (enteredPassword) {

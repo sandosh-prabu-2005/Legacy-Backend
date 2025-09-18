@@ -493,7 +493,11 @@ const acceptAdminInvite = catchAsyncError(async (req, res, next) => {
   // Update user details if provided (for new users)
   if (name) user.name = name;
   if (dept) user.dept = dept;
-  if (password) user.password = password;
+  if (password) {
+    user.password = password;
+    // Increment token version to invalidate all existing sessions when password is changed
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+  }
   if (gender) user.gender = gender;
   if (phone) user.phone = phone;
   user.club = club;

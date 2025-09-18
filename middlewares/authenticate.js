@@ -44,6 +44,15 @@ exports.isAuthenticatedUser = catchAsyncError(async (req, res, next) => {
       return next(new ErrorHandler("User not found", 404));
     }
 
+    // Check token version for session invalidation
+    const userTokenVersion = req.user.tokenVersion || 0;
+    const tokenVersion = decoded.tokenVersion || 0;
+    
+    if (tokenVersion < userTokenVersion) {
+      console.log("Token version outdated - session invalidated");
+      return next(new ErrorHandler("Session expired. Please login again.", 401));
+    }
+
     console.log(
       "User found:",
       req.user.email,
