@@ -23,7 +23,8 @@ const isUserRegisteredForEvent = async (userId, eventId) => {
   const event = await Events.findById(eventId);
   if (event) {
     const soloRegistration = event.applications.find(
-      (app) => app.userId && app.userId.toString() === userId.toString() && !app.teamId
+      (app) =>
+        app.userId && app.userId.toString() === userId.toString() && !app.teamId
     );
 
     if (soloRegistration) {
@@ -830,7 +831,7 @@ const getUserTeamsForEvent = catchAsyncError(async (req, res) => {
 const getTeam = catchAsyncError(async (req, res) => {
   const { teamId } = req.params;
   const userId = req.user._id;
-
+  console.log("[TEAM]:Asking for team");
   const team = await Teams.findById(teamId).populate([
     {
       path: "eventId",
@@ -856,16 +857,9 @@ const getTeam = catchAsyncError(async (req, res) => {
     });
   }
 
-  // Get pending invites
-  const pendingInvites = await Invites.find({
-    teamId,
-    status: "pending",
-  }).populate("inviterId", "name email");
-
   res.status(200).json({
     success: true,
     team,
-    pendingInvites,
   });
 });
 

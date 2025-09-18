@@ -800,49 +800,81 @@ const getDashboardStats = catchAsyncError(async (req, res, next) => {
     });
   }
 
-  // Super Admin: Get total registrations using aggregation
-  const totalApplicationsAgg = await EventModel.aggregate([
-    { $unwind: "$applications" },
-    { $group: { _id: null, totalApplications: { $sum: 1 } } },
-    { $project: { _id: 0, totalApplications: 1 } },
-  ]);
+  // Super Admin: Get statistics using EventRegistrations collection (like college registrations page)
+  const EventRegistrationModel = require("../models/eventRegistrations");
 
-  // Get boys/girls registrations using aggregation
-  const genderAgg = await EventModel.aggregate([
-    { $unwind: "$applications" },
-    {
-      $lookup: {
-        from: "users",
-        localField: "applications.userId",
-        foreignField: "_id",
-        as: "userDetails",
-      },
-    },
-    { $unwind: "$userDetails" },
-    {
-      $group: {
-        _id: "$userDetails.gender",
-        count: { $sum: 1 },
-      },
-    },
-    {
-      $project: {
-        _id: 0,
-        gender: "$_id",
-        count: 1,
-      },
-    },
-  ]);
+  // Get all registrations from EventRegistrations collection
+  const allRegistrations = await EventRegistrationModel.find({}).lean();
+
+  // Calculate total registrations (total individual registrations)
+  const totalRegistrations = allRegistrations.length;
+
+  // Separate solo and team registrations
+  const soloRegistrations = allRegistrations.filter(
+    (reg) => reg.eventType === "solo"
+  );
+  const teamRegistrations = allRegistrations.filter(
+    (reg) => reg.eventType === "group"
+  );
+
+  // Get unique teams for team events
+  const TeamModel = require("../models/teams");
+  const uniqueTeams = await TeamModel.find({ isRegistered: true }).lean();
+  const totalTeams = uniqueTeams.length;
+
+  // Calculate unique participants (people with same name, email, mobile, dept, etc.)
+  const uniqueParticipants = new Map();
+  allRegistrations.forEach((reg) => {
+    const key =
+      `${reg.participantName}-${reg.participantEmail}-${reg.participantMobile}-${reg.department}-${reg.level}`.toLowerCase();
+    if (!uniqueParticipants.has(key)) {
+      uniqueParticipants.set(key, {
+        name: reg.participantName,
+        email: reg.participantEmail,
+        gender: reg.gender,
+        dept: reg.department,
+        level: reg.level,
+      });
+    }
+  });
+
+  // Calculate gender statistics for all registrations
   let boys = 0,
     girls = 0,
     unknownGender = 0;
-  genderAgg.forEach((g) => {
-    if (String(g.gender).toLowerCase() === "male") boys = g.count;
-    else if (String(g.gender).toLowerCase() === "female") girls = g.count;
-    else unknownGender += g.count;
+  allRegistrations.forEach((reg) => {
+    const gender = String(reg.gender || "")
+      .toLowerCase()
+      .trim();
+    if (gender === "male" || gender === "m") boys++;
+    else if (gender === "female" || gender === "f") girls++;
+    else unknownGender++;
   });
 
-  // Other stats
+  // Calculate unique participant gender statistics
+  let uniqueBoys = 0,
+    uniqueGirls = 0,
+    uniqueUnknown = 0;
+  uniqueParticipants.forEach((participant) => {
+    const gender = String(participant.gender || "")
+      .toLowerCase()
+      .trim();
+    if (gender === "male" || gender === "m") uniqueBoys++;
+    else if (gender === "female" || gender === "f") uniqueGirls++;
+    else uniqueUnknown++;
+  });
+
+  console.log(
+    `[DASHBOARD STATS] Total Registrations: ${totalRegistrations}, Solo: ${soloRegistrations.length}, Team: ${teamRegistrations.length}, Teams: ${totalTeams}`
+  );
+  console.log(
+    `[DASHBOARD STATS] Gender - Boys: ${boys}, Girls: ${girls}, Unknown: ${unknownGender}`
+  );
+  console.log(
+    `[DASHBOARD STATS] Unique Participants: ${uniqueParticipants.size}, Boys: ${uniqueBoys}, Girls: ${uniqueGirls}`
+  );
+
+  // Other stats (keep existing logic)
   const totalUsers = await UserModel.countDocuments({ role: { $ne: "admin" } });
   const totalEvents = await EventModel.countDocuments();
   const totalAdmins = await UserModel.countDocuments({ role: "admin" });
@@ -881,13 +913,25 @@ const getDashboardStats = catchAsyncError(async (req, res, next) => {
       totalAdmins,
       verifiedUsers,
       unverifiedUsers,
-      totalApplications: totalRegistrationCount,
-      recentRegistrations,
-      pendingInvites,
-      adminsByClub,
+      // Total registrations (all individual registrations)
+      totalApplications: totalRegistrations,
+      totalRegistrations: totalRegistrations,
+      soloRegistrations: soloRegistrations.length,
+      teamRegistrations: teamRegistrations.length,
+      totalTeams: totalTeams,
+      // Gender statistics for all registrations
       boys,
       girls,
       unknownGender,
+      // Unique participant statistics
+      uniqueParticipants: uniqueParticipants.size,
+      uniqueBoys,
+      uniqueGirls,
+      uniqueUnknown,
+      // Other stats
+      recentRegistrations,
+      pendingInvites,
+      adminsByClub,
     },
     ...(userEventInfo && { assignedEvent: userEventInfo }),
   });
@@ -1421,7 +1465,10 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
         eventId: event._id,
         isRegistered: true,
       })
-        .populate({ path: "leader", select: "name email dept year phoneNumber" })
+        .populate({
+          path: "leader",
+          select: "name email dept year phoneNumber",
+        })
         .populate({
           path: "members.userId",
           select: "name email dept year phoneNumber",
@@ -1501,6 +1548,49 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
     return formatted;
   });
 
+  // Fetch registrant information from EventRegistrations model
+  let eventRegistrations = [];
+  try {
+    const EventRegistrationModel = require("../models/eventRegistrations");
+    eventRegistrations = await EventRegistrationModel.find({
+      eventId: event._id,
+    })
+      .populate("registrantId", "name email")
+      .lean();
+  } catch (err) {
+    console.error(
+      "Failed to load event registrations for registrant info:",
+      err
+    );
+  }
+
+  // Create a map for quick lookup of registrant info by participant userId/teamId
+  const registrantMap = new Map();
+  eventRegistrations.forEach((reg) => {
+    // For solo events, map by participant userId
+    if (event.event_type === "solo" && reg.participantEmail) {
+      // Find user by email since we might not have direct userId mapping
+      const participant = event.registrations?.find(
+        (r) => (r.user?.email || r.userEmail) === reg.participantEmail
+      );
+      if (participant) {
+        const participantId =
+          participant.userId?.toString() || participant.userId;
+        registrantMap.set(participantId, {
+          registrantName: reg.registrantId?.name || "Unknown",
+          registrantEmail: reg.registrantId?.email || reg.registrantEmail,
+        });
+      }
+    }
+    // For team events, map by teamId
+    else if (event.event_type === "group" && reg.teamId) {
+      registrantMap.set(reg.teamId.toString(), {
+        registrantName: reg.registrantId?.name || "Unknown",
+        registrantEmail: reg.registrantId?.email || reg.registrantEmail,
+      });
+    }
+  });
+
   // Format and return same structure as getEventsWithRegistrations for frontend
   const formattedEvent = {
     ...event,
@@ -1561,39 +1651,12 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
         : null;
 
       const teamInfo = teamIdStr ? teamMap.get(teamIdStr) : null;
-      const result = {
-        userId: reg.userId,
-        teamId: reg.teamId,
-        registeredAt: reg.registeredAt || reg.appliedAt,
-        // legacy-friendly fields for frontend components
-        name: reg.user?.name || reg.userName || "Unknown",
-        email: reg.user?.email || reg.userEmail || "Unknown",
-        dept: reg.user?.dept || reg.userDept || "Unknown",
-        year: reg.user?.year || reg.userYear || "Unknown",
-        rollNum:
-          reg.user?.phoneNumber ||
-          reg.rollNum ||
-          reg.user?.rollNum ||
-          reg.user?.phoneNumber ||
-          null,
-        // also provide namespaced fields (kept for backward compatibility)
-        userName: reg.user?.name || reg.userName || "Unknown",
-        userEmail: reg.user?.email || reg.userEmail || "Unknown",
-        userDept: reg.user?.dept || reg.userDept || "Unknown",
-        userYear: reg.user?.year || reg.userYear || "Unknown",
-        isWinner: reg.isWinner || false,
-        isPresent:
-          reg.user?.attendance?.[event.event_id] ?? reg.isPresent ?? false,
-        winnerRank: reg.winnerRank || null,
-        teamName:
-          teamInfo && teamInfo.teamName
-            ? teamInfo.teamName
-            : reg.teamId && typeof reg.teamId === "object"
-            ? reg.teamId.teamName || reg.teamId.name || null
-            : null,
-        teamMembers: teamInfo ? teamInfo.members : [],
-      };
-      console.log(result);
+
+      // Get registrant info
+      const participantId = reg.userId?.toString() || reg.userId;
+      const registrantInfo =
+        registrantMap.get(participantId) || registrantMap.get(teamIdStr) || {};
+
       return {
         userId: reg.userId,
         teamId: reg.teamId,
@@ -1625,8 +1688,170 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
             ? reg.teamId.teamName || reg.teamId.name || null
             : null,
         teamMembers: teamInfo ? teamInfo.members : [],
+        // Add registrant information
+        registrantName: registrantInfo.registrantName || "Unknown",
+        registrantEmail: registrantInfo.registrantEmail || "Unknown",
       };
     }),
+  };
+
+  res.status(200).json({ success: true, event: formattedEvent });
+});
+
+// Enhanced version that fetches registration data primarily from EventRegistrations model
+const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
+  const eventId = req.params.id;
+
+  // Fetch event details first
+  const isObjectId = mongoose.Types.ObjectId.isValid(eventId);
+  const matchStage = isObjectId
+    ? {
+        $or: [
+          { _id: new mongoose.Types.ObjectId(eventId) },
+          { event_id: eventId },
+        ],
+      }
+    : { event_id: eventId };
+
+  const event = await EventModel.findOne(matchStage).lean();
+  if (!event) {
+    return res.status(404).json({ success: false, message: "Event not found" });
+  }
+
+  // Fetch comprehensive registration data from EventRegistrations model
+  const EventRegistrationModel = require("../models/eventRegistrations");
+  const registrations = await EventRegistrationModel.find({
+    eventId: event._id,
+  })
+    .populate("registrantId", "name email college")
+    .lean();
+
+  // Build registrations array with complete information
+  const formattedRegistrations = registrations.map((reg) => ({
+    userId: reg.participantId || null,
+    teamId: reg.teamId || null,
+    registeredAt: reg.createdAt,
+    // Participant information
+    name: reg.participantName || "Unknown",
+    email: reg.participantEmail || "Unknown",
+    mobile: reg.participantMobile || null,
+    dept: reg.department || "Unknown",
+    year: reg.year || "Unknown",
+    gender: reg.gender || "Unknown",
+    college: reg.collegeName || "Unknown",
+    // Also provide namespaced fields for backward compatibility
+    userName: reg.participantName || "Unknown",
+    userEmail: reg.participantEmail || "Unknown",
+    userMobile: reg.participantMobile || null,
+    userDept: reg.department || "Unknown",
+    userYear: reg.year || "Unknown",
+    userGender: reg.gender || "Unknown",
+    userCollege: reg.collegeName || "Unknown",
+    // Registrant information
+    registrantName: reg.registrantId?.name || "Unknown",
+    registrantEmail: reg.registrantId?.email || "Unknown",
+    registrantCollege: reg.registrantId?.college || "Unknown",
+    // Other fields
+    isWinner: false, // Will be updated from event applications if available
+    isPresent: false,
+    winnerRank: null,
+  }));
+
+  // Create a map of registrant info by teamId for team events
+  const teamRegistrantMap = new Map();
+  registrations.forEach((reg) => {
+    if (reg.teamId) {
+      teamRegistrantMap.set(reg.teamId.toString(), {
+        registrantName: reg.registrantId?.name || "Unknown",
+        registrantEmail: reg.registrantId?.email || "Unknown",
+        registrantCollege: reg.registrantId?.college || "Unknown",
+      });
+    }
+  });
+
+  // Update winner status from event applications if available
+  if (event.applications && Array.isArray(event.applications)) {
+    event.applications.forEach((app) => {
+      const registration = formattedRegistrations.find(
+        (reg) => reg.userId?.toString() === app.userId?.toString()
+      );
+      if (registration) {
+        registration.isWinner = app.isWinner || false;
+        registration.isPresent = app.isPresent || false;
+        registration.winnerRank = app.winnerRank || null;
+      }
+    });
+  }
+
+  // Fetch team information for group events
+  let teams = [];
+  if (event.event_type === "group") {
+    try {
+      const TeamModel = require("../models/teams");
+      teams = await TeamModel.find({
+        eventId: event._id,
+        isRegistered: true,
+      })
+        .populate("leader", "name email dept year phoneNumber college")
+        .populate("members.userId", "name email dept year phoneNumber college")
+        .lean();
+
+      // Format teams with member information including college
+      teams = teams.map((team) => {
+        const teamRegistrant = teamRegistrantMap.get(team._id.toString()) || {};
+        return {
+          _id: team._id,
+          teamName: team.teamName || team.name || "Team",
+          leader: {
+            _id: team.leader?._id || null,
+            name: team.leader?.name || "Unknown",
+            email: team.leader?.email || "Unknown",
+            dept: team.leader?.dept || "Unknown",
+            year: team.leader?.year || "Unknown",
+            college: team.leader?.college || "Unknown",
+          },
+          members: (team.members || [])
+            .filter(
+              (member) =>
+                member.userId &&
+                member.userId._id?.toString() !== team.leader?._id?.toString()
+            )
+            .map((member) => ({
+              _id: member.userId._id,
+              name: member.userId.name || "Unknown",
+              email: member.userId.email || "Unknown",
+              dept: member.userId.dept || "Unknown",
+              year: member.userId.year || "Unknown",
+              college: member.userId.college || "Unknown",
+              joinedAt: member.joinedAt,
+            })),
+          memberCount: team.members?.length || 0,
+          registeredAt: team.registeredAt,
+          isRegistered: !!team.isRegistered,
+          // Add registrant information for the team
+          registrantName: teamRegistrant.registrantName || "Unknown",
+          registrantEmail: teamRegistrant.registrantEmail || "Unknown",
+          registrantCollege: teamRegistrant.registrantCollege || "Unknown",
+        };
+      });
+    } catch (err) {
+      console.error("Failed to load teams:", err);
+    }
+  }
+
+  // Format final response
+  const formattedEvent = {
+    ...event,
+    availableSeats: event.maxApplications
+      ? event.maxApplications - formattedRegistrations.length
+      : null,
+    registrationCount: formattedRegistrations.length,
+    registeredTeamsCount: teams.length,
+    teams,
+    registrations: formattedRegistrations,
+    winners: formattedRegistrations
+      .filter((r) => r.isWinner)
+      .sort((a, b) => (a.winnerRank ?? Infinity) - (b.winnerRank ?? Infinity)),
   };
 
   res.status(200).json({ success: true, event: formattedEvent });
@@ -3037,6 +3262,248 @@ const getEventParticipants = catchAsyncError(async (req, res, next) => {
   }
 });
 
+// Create a new admin (SuperAdmin only)
+const createAdmin = catchAsyncError(async (req, res, next) => {
+  const { name, email, assignedEventId, club, tempPassword } = req.body;
+
+  // Check if the current user is a SuperAdmin
+  if (!req.user.isSuperAdmin || req.user.role !== "admin") {
+    return next(new ErrorHandler("Only SuperAdmins can create admins", 403));
+  }
+
+  // Validate required fields
+  if (!name || !email || !assignedEventId || !club) {
+    return next(
+      new ErrorHandler(
+        "Name, email, assigned event, and club are required",
+        400
+      )
+    );
+  }
+
+  // Check if user with this email already exists
+  const existingUser = await UserModel.findOne({ email });
+  if (existingUser) {
+    return next(new ErrorHandler("User with this email already exists", 400));
+  }
+
+  // Verify that the assigned event exists
+  const assignedEvent = await EventModel.findById(assignedEventId);
+  if (!assignedEvent) {
+    return next(new ErrorHandler("Assigned event not found", 404));
+  }
+
+  // Generate a temporary password if not provided
+  const password = tempPassword || crypto.randomBytes(8).toString("hex");
+
+  try {
+    // Create the admin user
+    const adminUser = await UserModel.create({
+      name,
+      email,
+      password,
+      role: "admin",
+      isSuperAdmin: false,
+      assignedEvent: assignedEventId,
+      club,
+      college: "MSEC", // Default college for admins
+      city: "Chennai", // Default city for admins
+      level: "UG", // Default level for admins
+      degree: "BTech", // Default degree for admins
+      dept: "Computer Science Engineering", // Default department for admins
+      year: "0", // Default year for admins
+      gender: "Male", // Default gender for admins
+      phoneNumber: "9999999999", // Default phone for admins
+      isVerified: true, // Admins are verified by default
+      invitedBy: req.user._id, // Track who created this admin
+    });
+
+    // Send email with login credentials
+    const emailSubject = "Admin Account Created - Legacy'25";
+    const emailMessage = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Welcome to Legacy'25 Admin Panel</h2>
+        <p>Dear ${name},</p>
+        <p>Your admin account has been created by SuperAdmin <strong>${req.user.name}</strong>.</p>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Login Credentials:</h3>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Temporary Password:</strong> ${password}</p>
+          <p><strong>Assigned Event:</strong> ${assignedEvent.name}</p>
+          <p><strong>Club:</strong> ${club}</p>
+        </div>
+        
+        <p style="color: #e74c3c; font-weight: bold;">
+          ⚠️ Please change your password immediately after first login for security purposes.
+        </p>
+        
+        <p>You can access the admin panel at: <a href="${process.env.FRONTEND_URL}/auth/signin">Login to Admin Panel</a></p>
+        
+        <p>Best regards,<br>Legacy'25 SuperAdmin Team</p>
+      </div>
+    `;
+
+    await sendEmail({
+      email: adminUser.email,
+      subject: emailSubject,
+      message: emailMessage,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Admin created successfully and credentials sent via email",
+      admin: {
+        id: adminUser._id,
+        name: adminUser.name,
+        email: adminUser.email,
+        club: adminUser.club,
+        assignedEvent: {
+          id: assignedEvent._id,
+          name: assignedEvent.name,
+        },
+        createdAt: adminUser.createdAt,
+      },
+      tempPassword: password, // Include in response for SuperAdmin reference
+    });
+  } catch (error) {
+    console.error("Error creating admin:", error);
+    return next(new ErrorHandler("Failed to create admin", 500));
+  }
+});
+
+// Get all events for admin assignment dropdown
+const getEventsForAdminAssignment = catchAsyncError(async (req, res, next) => {
+  // Check if the current user is a SuperAdmin
+  if (!req.user.isSuperAdmin || req.user.role !== "admin") {
+    return next(
+      new ErrorHandler("Only SuperAdmins can access this endpoint", 403)
+    );
+  }
+
+  try {
+    const events = await EventModel.find({
+      isActive: true,
+      isArchived: false,
+    })
+      .select("_id name event_type club organizing_club event_date")
+      .sort({ event_date: 1 });
+
+    res.status(200).json({
+      success: true,
+      events,
+    });
+  } catch (error) {
+    console.error("Error fetching events for admin assignment:", error);
+    return next(new ErrorHandler("Failed to fetch events", 500));
+  }
+});
+
+// Change admin password (SuperAdmin only)
+const changeAdminPassword = catchAsyncError(async (req, res, next) => {
+  // Check if the current user is a SuperAdmin
+  if (!req.user.isSuperAdmin || req.user.role !== "admin") {
+    return next(
+      new ErrorHandler("Only SuperAdmins can change admin passwords", 403)
+    );
+  }
+
+  const { adminId } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.trim().length < 6) {
+    return next(
+      new ErrorHandler("Password must be at least 6 characters long", 400)
+    );
+  }
+
+  try {
+    // Find the admin user
+    const admin = await User.findById(adminId);
+    if (!admin) {
+      return next(new ErrorHandler("Admin not found", 404));
+    }
+
+    if (admin.role !== "admin") {
+      return next(new ErrorHandler("User is not an admin", 400));
+    }
+
+    // Update the password
+    admin.password = newPassword;
+    await admin.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Password updated successfully for admin: ${admin.name}`,
+    });
+  } catch (error) {
+    console.error("Error changing admin password:", error);
+    return next(new ErrorHandler("Failed to change admin password", 500));
+  }
+});
+
+// Get college registration statistics
+const getCollegeRegistrationStats = catchAsyncError(async (req, res, next) => {
+  const user = req.user;
+  // allow admins and superadmins
+  if (!user) return next(new ErrorHandler("Not authenticated", 401));
+
+  const EventRegistrationModel = require("../models/eventRegistrations");
+
+  // If admin is event-specific, limit to that event
+  const isEventSpecificAdmin =
+    user.role === "admin" && !user.isSuperAdmin && user.assignedEvent;
+
+  let query = {};
+  if (isEventSpecificAdmin) {
+    query.eventId = new mongoose.Types.ObjectId(user.assignedEvent);
+  }
+
+  try {
+    console.log("Starting college registration stats query...");
+    console.log("Is event specific admin:", isEventSpecificAdmin);
+    if (isEventSpecificAdmin) {
+      console.log("Assigned event:", user.assignedEvent);
+    }
+
+    // Get all registrations that match our criteria
+    const registrations = await EventRegistrationModel.find(query).lean();
+    console.log("Found registrations count:", registrations.length);
+    console.log("Sample registrations:", registrations.slice(0, 3));
+
+    // Aggregate data by college and gender
+    const combined = {};
+    registrations.forEach((registration) => {
+      const college = registration.collegeName || "Unknown";
+      const gender = (registration.gender || "unknown").toLowerCase();
+
+      if (!combined[college]) {
+        combined[college] = {
+          college,
+          male: 0,
+          female: 0,
+          unknown: 0,
+          total: 0,
+        };
+      }
+
+      combined[college][gender] += 1;
+      combined[college].total += 1;
+    });
+
+    const data = Object.values(combined).sort((a, b) => b.total - a.total);
+    console.log("Final college stats data:", data);
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error("Error in getCollegeRegistrationStats:", error);
+    return next(new ErrorHandler("Failed to fetch college statistics", 500));
+  }
+});
+
 module.exports = {
   createEvent,
   getAllEventsWithApplications,
@@ -3054,6 +3521,7 @@ module.exports = {
   getAllAdmins,
   getEventsWithRegistrations,
   getEventWithRegistrations,
+  getEventWithRegistrationsV2,
   getEventRegistrations,
   getEventParticipants,
   updateRegistrationAttendance,
@@ -3070,4 +3538,8 @@ module.exports = {
   getDatabaseUpdateStatus,
   getEventsWithAdminStatus,
   updateEventAttendance,
+  createAdmin,
+  getEventsForAdminAssignment,
+  getCollegeRegistrationStats,
+  changeAdminPassword,
 };

@@ -36,12 +36,6 @@ router.get(
 );
 
 // Notification routes (must come before /:teamId)
-router.get("/notifications", isAuthenticatedUser, getUserNotifications);
-router.put(
-  "/notifications/:inviteId/read",
-  isAuthenticatedUser,
-  markNotificationAsRead
-);
 
 // Team detail route (must come after notification routes)
 router.get("/:teamId", isAuthenticatedUser, getTeam);

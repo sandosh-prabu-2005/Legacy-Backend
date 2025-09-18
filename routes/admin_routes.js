@@ -16,6 +16,7 @@ const {
   getAllAdmins,
   getEventsWithRegistrations,
   getEventWithRegistrations,
+  getEventWithRegistrationsV2,
   getDeptRegistrationStats,
   getEventRegistrations,
   getEventParticipants,
@@ -31,6 +32,10 @@ const {
   getDatabaseUpdateStatus,
   getEventsWithAdminStatus,
   updateEventAttendance,
+  createAdmin,
+  getEventsForAdminAssignment,
+  getCollegeRegistrationStats,
+  // changeAdminPassword,
 } = require("../controllers/adminController");
 const {
   isAuthenticatedUser,
@@ -55,6 +60,16 @@ router
 router
   .route("/admin/dashboard/dept-stats")
   .get(isAuthenticatedUser, authorizeRoles("admin"), getDeptRegistrationStats);
+
+router
+  .route("/admin/dashboard/college-stats")
+  .get(
+    isAuthenticatedUser,
+    authorizeRoles("admin"),
+    getCollegeRegistrationStats
+  );
+
+// Users
 
 // NOTE: department stats route handled by getDeptRegistrationStats above
 
@@ -94,6 +109,15 @@ router
 router
   .route("/admin/events/:id/with-registrations")
   .get(isAuthenticatedUser, authorizeRoles("admin"), getEventWithRegistrations);
+
+// Enhanced route: get event with comprehensive registration data from EventRegistrations model
+router
+  .route("/admin/events/:id/with-registrations-v2")
+  .get(
+    isAuthenticatedUser,
+    authorizeRoles("admin"),
+    getEventWithRegistrationsV2
+  );
 
 router
   .route("/admin/events/:eventId/registrations/:registrationId/attendance")
@@ -167,6 +191,35 @@ router
 
 // Public route for accepting invites (no auth required)
 router.route("/admin/invite/accept/:token").post(acceptAdminInvite);
+
+// Admin creation routes (Super Admin only)
+router
+  .route("/admin/create-admin")
+  .post(
+    isAuthenticatedUser,
+    authorizeRoles("admin"),
+    superAdminAuth,
+    createAdmin
+  );
+
+router
+  .route("/admin/events-for-assignment")
+  .get(
+    isAuthenticatedUser,
+    authorizeRoles("admin"),
+    superAdminAuth,
+    getEventsForAdminAssignment
+  );
+
+// Change admin password route (Super Admin only)
+// router
+//   .route("/admin/change-admin-password/:adminId")
+//   .put(
+//     isAuthenticatedUser,
+//     authorizeRoles("admin"),
+//     superAdminAuth,
+//     changeAdminPassword
+//   );
 
 // Update event dates route (Super Admin only)
 router
