@@ -19,7 +19,6 @@ const {
   getEventWithRegistrationsV2,
   getDeptRegistrationStats,
   getEventRegistrations,
-  getEventParticipants,
   updateEventWinners,
   updateRegistrationAttendance,
   getClubAdminStats,
@@ -100,10 +99,6 @@ router
 router
   .route("/admin/events/:eventId/registrations")
   .get(isAuthenticatedUser, authorizeRoles("admin"), getEventRegistrations);
-
-router
-  .route("/admin/events/:eventId/participants")
-  .get(isAuthenticatedUser, authorizeRoles("admin"), getEventParticipants);
 
 // New route: get a single event with aggregated registrations and teams
 router

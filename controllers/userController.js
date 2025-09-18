@@ -292,8 +292,6 @@ const resetPassword = catchAsyncError(async (req, res, next) => {
   user.password = password;
   user.resetPasswordToken = undefined;
   user.resetPasswordTokenExpire = undefined;
-  // Increment token version to invalidate all existing sessions
-  user.tokenVersion = (user.tokenVersion || 0) + 1;
 
   await user.save();
 
@@ -563,8 +561,6 @@ const changePassword = catchAsyncError(async (req, res, next) => {
   }
 
   user.password = newPassword;
-  // Increment token version to invalidate all existing sessions
-  user.tokenVersion = (user.tokenVersion || 0) + 1;
   await user.save();
 
   res.status(200).json({

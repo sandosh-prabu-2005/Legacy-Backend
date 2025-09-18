@@ -5,7 +5,6 @@ const mongoose = require("mongoose");
 const EventModel = require("../models/events");
 const UserModel = require("../models/users");
 const TeamModel = require("../models/teams");
-const EventRegistrationModel = require("../models/eventRegistrations");
 const sendEmail = require("../utils/email");
 const crypto = require("crypto");
 
@@ -494,11 +493,7 @@ const acceptAdminInvite = catchAsyncError(async (req, res, next) => {
   // Update user details if provided (for new users)
   if (name) user.name = name;
   if (dept) user.dept = dept;
-  if (password) {
-    user.password = password;
-    // Increment token version to invalidate all existing sessions when password is changed
-    user.tokenVersion = (user.tokenVersion || 0) + 1;
-  }
+  if (password) user.password = password;
   if (gender) user.gender = gender;
   if (phone) user.phone = phone;
   user.club = club;
@@ -3114,154 +3109,6 @@ const updateRegistrationAttendance = catchAsyncError(async (req, res, next) => {
   });
 });
 
-// Get event participants from eventregistration collection (Admin only)
-const getEventParticipants = catchAsyncError(async (req, res, next) => {
-  const { eventId } = req.params;
-
-  if (!eventId) {
-    return next(new ErrorHandler("Event ID is required", 400));
-  }
-
-  // Find the event first to get event details
-  const event = await EventModel.findOne({ 
-    $or: [
-      { _id: mongoose.Types.ObjectId.isValid(eventId) ? eventId : null },
-      { event_id: eventId }
-    ]
-  });
-  
-  if (!event) {
-    return next(new ErrorHandler("Event not found", 404));
-  }
-
-  try {
-    // Fetch participants from eventregistration collection
-    const participants = await EventRegistrationModel.find({ 
-      eventId: event._id 
-    })
-    .populate('registrantId', 'name email phoneNumber dept year level degree gender college city state')
-    .sort({ registrationDate: -1 });
-
-    // Group participants by team for group events
-    const formattedParticipants = [];
-    
-    if (event.event_type === 'group') {
-      // Group participants by teamId
-      const teamGroups = {};
-      
-      participants.forEach(participant => {
-        const teamId = participant.teamId ? participant.teamId.toString() : 'no-team';
-        if (!teamGroups[teamId]) {
-          teamGroups[teamId] = [];
-        }
-        teamGroups[teamId].push({
-          _id: participant._id,
-          participantName: participant.participantName,
-          participantEmail: participant.participantEmail,
-          participantMobile: participant.participantMobile,
-          level: participant.level,
-          degree: participant.degree,
-          department: participant.fullDepartment, // Using virtual field
-          year: participant.year,
-          gender: participant.gender,
-          collegeName: participant.collegeName,
-          collegeCity: participant.collegeCity,
-          collegeState: participant.collegeState,
-          teamId: participant.teamId,
-          teamName: participant.teamName,
-          registrationDate: participant.registrationDate,
-          registrationType: participant.registrationType,
-          isActive: participant.isActive,
-          registrant: participant.registrantId ? {
-            _id: participant.registrantId._id,
-            name: participant.registrantId.name,
-            email: participant.registrantId.email,
-            phoneNumber: participant.registrantId.phoneNumber,
-            dept: participant.registrantId.dept,
-            year: participant.registrantId.year,
-            level: participant.registrantId.level,
-            degree: participant.registrantId.degree,
-            gender: participant.registrantId.gender,
-            college: participant.registrantId.college,
-            city: participant.registrantId.city,
-            state: participant.registrantId.state
-          } : null
-        });
-      });
-      
-      // Convert grouped data to array format
-      Object.keys(teamGroups).forEach(teamId => {
-        const teamMembers = teamGroups[teamId];
-        teamMembers.forEach((member, index) => {
-          formattedParticipants.push({
-            ...member,
-            role: index === 0 ? 'Leader' : 'Member', // First member is leader
-            teamMemberCount: teamMembers.length
-          });
-        });
-      });
-    } else {
-      // For solo events, just format the participants
-      participants.forEach(participant => {
-        formattedParticipants.push({
-          _id: participant._id,
-          participantName: participant.participantName,
-          participantEmail: participant.participantEmail,
-          participantMobile: participant.participantMobile,
-          level: participant.level,
-          degree: participant.degree,
-          department: participant.fullDepartment,
-          year: participant.year,
-          gender: participant.gender,
-          collegeName: participant.collegeName,
-          collegeCity: participant.collegeCity,
-          collegeState: participant.collegeState,
-          teamId: null,
-          teamName: null,
-          registrationDate: participant.registrationDate,
-          registrationType: participant.registrationType,
-          isActive: participant.isActive,
-          role: 'Individual',
-          registrant: participant.registrantId ? {
-            _id: participant.registrantId._id,
-            name: participant.registrantId.name,
-            email: participant.registrantId.email,
-            phoneNumber: participant.registrantId.phoneNumber,
-            dept: participant.registrantId.dept,
-            year: participant.registrantId.year,
-            level: participant.registrantId.level,
-            degree: participant.registrantId.degree,
-            gender: participant.registrantId.gender,
-            college: participant.registrantId.college,
-            city: participant.registrantId.city,
-            state: participant.registrantId.state
-          } : null
-        });
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      event: {
-        _id: event._id,
-        name: event.name,
-        event_id: event.event_id,
-        event_type: event.event_type,
-        date: event.event_date,
-        clubInCharge: event.clubInCharge
-      },
-      participants: formattedParticipants,
-      totalParticipants: formattedParticipants.length,
-      totalTeams: event.event_type === 'group' ? 
-        new Set(formattedParticipants.map(p => p.teamId).filter(Boolean)).size : 0
-    });
-
-  } catch (error) {
-    console.error('Error fetching event participants:', error);
-    return next(new ErrorHandler('Failed to fetch event participants', 500));
-  }
-});
-
 // Create a new admin (SuperAdmin only)
 const createAdmin = catchAsyncError(async (req, res, next) => {
   const { name, email, assignedEventId, club, tempPassword } = req.body;
@@ -3523,7 +3370,6 @@ module.exports = {
   getEventWithRegistrations,
   getEventWithRegistrationsV2,
   getEventRegistrations,
-  getEventParticipants,
   updateRegistrationAttendance,
   updateEventWinners,
   getDeptRegistrationStats,

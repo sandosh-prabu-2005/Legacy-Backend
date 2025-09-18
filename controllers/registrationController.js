@@ -635,16 +635,14 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
   const {
     participantName,
     participantEmail,
-    participantMobile,
     department,
     degree,
     year,
     level,
     gender,
+    mobile,
     eventId,
   } = req.body;
-
-  console.log("updateSoloRegistration called with:", { registrationId, userId: userId.toString(), body: req.body });
 
   // Find the registration
   const registration = await EventRegistration.findById(registrationId);
@@ -729,7 +727,7 @@ exports.updateSoloRegistration = catchAsyncError(async (req, res, next) => {
   registration.year = year || registration.year;
   registration.level = level || registration.level;
   registration.gender = gender || registration.gender;
-  registration.participantMobile = participantMobile || registration.participantMobile;
+  registration.mobile = mobile || registration.mobile;
 
   await registration.save();
 
@@ -749,15 +747,13 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     const {
       participantName,
       participantEmail,
-      participantMobile,
       department,
       degree,
       year,
       level,
       gender,
+      mobile,
     } = req.body;
-
-    console.log("updateTeamRegistrationMember called with:", { teamId, memberId, userId: userId.toString(), body: req.body });
 
     // Find the team
     const team = await Teams.findById(teamId);
@@ -765,10 +761,10 @@ exports.updateTeamRegistrationMember = catchAsyncError(
       return next(new ErrorHandler("Team not found", 404));
     }
 
-    // Check if the current user is the one who registered this team or is the team leader
-    if (team.registeredBy && team.registeredBy.toString() !== userId.toString() && team.leader.toString() !== userId.toString()) {
+    // Check if the current user is the one who registered this team
+    if (team.registrantId.toString() !== userId.toString()) {
       return next(
-        new ErrorHandler("You can only edit teams you registered or lead", 403)
+        new ErrorHandler("You can only edit teams you registered", 403)
       );
     }
 
@@ -786,7 +782,7 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     member.year = year || member.year;
     member.level = level || member.level;
     member.gender = gender || member.gender;
-    member.participantMobile = participantMobile || member.participantMobile;
+    member.mobile = mobile || member.mobile;
 
     await team.save();
 
@@ -794,73 +790,6 @@ exports.updateTeamRegistrationMember = catchAsyncError(
       success: true,
       message: "Team member details updated successfully",
       team,
-    });
-  }
-);
-
-// Remove team registration member
-exports.removeTeamRegistrationMember = catchAsyncError(
-  async (req, res, next) => {
-    const { teamId, memberId } = req.params;
-    const userId = req.user._id;
-
-    console.log("removeTeamRegistrationMember called with:", { teamId, memberId, userId: userId.toString() });
-
-    // Find the member's registration document
-    const memberRegistration = await EventRegistration.findById(memberId);
-    if (!memberRegistration) {
-      return next(new ErrorHandler("Member registration not found", 404));
-    }
-
-    // Check if the current user has permission to remove this member
-    // Allow if: user is the registrant of this member OR user is a coordinator/admin
-    if (memberRegistration.registrantId.toString() !== userId.toString()) {
-      // For coordinators/admins, we should check user role here
-      // For now, let's allow if they're from the same college
-      const currentUser = await User.findById(userId);
-      if (!currentUser || currentUser.collegeName !== memberRegistration.collegeName) {
-        return next(
-          new ErrorHandler("You can only remove members you registered or from your college", 403)
-        );
-      }
-    }
-
-    // Get the event details to check minTeamSize
-    const event = await Event.findById(memberRegistration.eventId);
-    if (!event) {
-      return next(new ErrorHandler("Event not found", 404));
-    }
-
-    // Check how many team members exist for this team/event combination
-    const teamMembers = await EventRegistration.find({
-      teamId: memberRegistration.teamId,
-      eventId: memberRegistration.eventId,
-      isActive: true
-    });
-
-    // Check if this would leave the team with less than minimum required members
-    const minTeamSize = event.minTeamSize || 1;
-    if (teamMembers.length <= minTeamSize) {
-      return next(new ErrorHandler(`Cannot remove member - team must have at least ${minTeamSize} member${minTeamSize > 1 ? 's' : ''} for this event`, 400));
-    }
-
-    // Remove the member by setting isActive to false (soft delete)
-    memberRegistration.isActive = false;
-    await memberRegistration.save();
-
-    // Alternative: Hard delete if preferred
-    // await EventRegistration.findByIdAndDelete(memberId);
-
-    res.status(200).json({
-      success: true,
-      message: `${memberRegistration.participantName} has been removed from the team successfully`,
-      removedMember: {
-        _id: memberRegistration._id,
-        participantName: memberRegistration.participantName,
-        participantEmail: memberRegistration.participantEmail,
-        teamName: memberRegistration.teamName,
-        eventName: memberRegistration.eventName
-      },
     });
   }
 );
@@ -993,134 +922,5 @@ exports.getRegistrationDetails = catchAsyncError(async (req, res, next) => {
   } catch (error) {
     console.error("Error fetching registration details:", error);
     return next(new ErrorHandler("Failed to fetch registration details", 500));
-  }
-});
-
-// Update team registration (all members and team name)
-exports.updateTeamRegistration = catchAsyncError(async (req, res, next) => {
-  const { teamId } = req.params;
-  const userId = req.user._id;
-  const { teamName, members } = req.body;
-
-    console.log("updateTeamRegistration called with:", { teamId, teamName, membersCount: members?.length });
-    console.log("Full request body:", req.body);  // Find all registrations for this team
-  const teamRegistrations = await EventRegistration.find({ 
-    teamId: teamId,
-    isActive: true 
-  });
-
-  console.log(`Found ${teamRegistrations.length} team registrations for teamId: ${teamId}`);
-
-  if (!teamRegistrations || teamRegistrations.length === 0) {
-    return next(new ErrorHandler("Team not found", 404));
-  }
-
-  // Check if user has permission to update this team
-  const user = await User.findById(userId);
-  const firstRegistration = teamRegistrations[0];
-  
-  // Check if user is the registrant or if they're from the same college and are coordinator/admin
-  const isRegistrant = firstRegistration.registrantId.toString() === userId.toString();
-  const isSameCollege = firstRegistration.collegeName === user.college;
-  const hasPermission = isRegistrant || (isSameCollege && (user.isVerified || user.role === "admin"));
-
-  if (!hasPermission) {
-    return next(new ErrorHandler("You don't have permission to update this team", 403));
-  }
-
-  try {
-    // Validate members array
-    if (!members || !Array.isArray(members)) {
-      return next(new ErrorHandler("Members array is required", 400));
-    }
-
-    // Update team name for all registrations of this team
-    if (teamName && teamName.trim()) {
-      const teamNameUpdateResult = await EventRegistration.updateMany(
-        { teamId: teamId, isActive: true },
-        { teamName: teamName.trim() }
-      );
-      console.log(`Team name update result:`, teamNameUpdateResult);
-    }
-
-    // Separate existing members from new members
-    const existingMembers = members.filter(member => member._id);
-    const newMembers = members.filter(member => !member._id);
-
-    console.log(`Processing ${existingMembers.length} existing members and ${newMembers.length} new members`);
-
-    // Update existing members
-    const updatePromises = existingMembers.map(async (member) => {
-      const updateData = {
-        participantName: member.participantName,
-        participantEmail: member.participantEmail,
-        participantMobile: member.participantMobile,
-        level: member.level,
-        degree: member.degree,
-        department: member.department,
-        year: member.year,
-        gender: member.gender,
-      };
-
-      console.log(`Updating existing member ${member._id} with data:`, updateData);
-
-      return EventRegistration.findByIdAndUpdate(
-        member._id,
-        updateData,
-        { new: true }
-      );
-    });
-
-    // Create new members
-    const createPromises = newMembers.map(async (member) => {
-      const newRegistrationData = {
-        eventId: firstRegistration.eventId,
-        eventName: firstRegistration.eventName,
-        eventType: firstRegistration.eventType,
-        teamId: teamId,
-        teamName: teamName && teamName.trim() ? teamName.trim() : firstRegistration.teamName,
-        registrantId: userId, // The user creating this new member
-        registrantEmail: user.email,
-        participantName: member.participantName,
-        participantEmail: member.participantEmail,
-        participantMobile: member.participantMobile,
-        level: member.level,
-        degree: member.degree,
-        department: member.department,
-        year: member.year,
-        gender: member.gender,
-        collegeName: firstRegistration.collegeName,
-        collegeCity: firstRegistration.collegeCity,
-        collegeState: firstRegistration.collegeState,
-        registrationType: "direct",
-        isActive: true,
-      };
-
-      console.log(`Creating new member with data:`, newRegistrationData);
-
-      return EventRegistration.create(newRegistrationData);
-    });
-
-    // Execute all updates and creates
-    const updateResults = await Promise.all(updatePromises);
-    const createResults = await Promise.all(createPromises);
-    
-    const successfulUpdates = updateResults.filter(result => result !== null);
-    const successfulCreates = createResults.filter(result => result !== null);
-
-    console.log(`Updated ${successfulUpdates.length} existing members and created ${successfulCreates.length} new members successfully`);
-
-    res.status(200).json({
-      success: true,
-      message: `Team "${teamName || firstRegistration.teamName}" updated successfully`,
-      updatedMembers: successfulUpdates.length,
-      createdMembers: successfulCreates.length,
-      totalMembers: successfulUpdates.length + successfulCreates.length,
-      requestedMembers: members.length,
-    });
-
-  } catch (error) {
-    console.error("Error updating team registration:", error);
-    return next(new ErrorHandler("Failed to update team registration", 500));
   }
 });
