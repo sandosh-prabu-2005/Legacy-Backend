@@ -588,6 +588,8 @@ const getDashboardStats = catchAsyncError(async (req, res, next) => {
           maxApplications: 1,
           minTeamSize: 1,
           maxTeamSize: 1,
+          winners: 1, // Include the winners field
+          winnersUpdatedAt: 1, // Include the winners timestamp
           registrationCount: {
             $cond: {
               if: { $eq: ["$event_type", "group"] },
@@ -773,8 +775,10 @@ const getDashboardStats = catchAsyncError(async (req, res, next) => {
       availableSeats: event.maxApplications
         ? event.maxApplications - (event.registrationCount || 0)
         : null,
-      // Build winners array from registrations if any winner flags exist
-      winners: (event.registrations || [])
+      // Get winners from the event's winners field (new approach)
+      winners: event.winners || [],
+      // Fallback winners built from isWinner flags (for backward compatibility)
+      fallbackWinners: (event.registrations || [])
         .filter((r) => r.isWinner)
         .slice()
         .sort((a, b) => (a.winnerRank ?? Infinity) - (b.winnerRank ?? Infinity))
@@ -1376,6 +1380,8 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
         createdAt: 1,
         updatedAt: 1,
         maxApplications: 1,
+        winners: 1, // Include the winners field
+        winnersUpdatedAt: 1, // Include the winners timestamp
         registrationCount: {
           $cond: {
             if: { $eq: ["$event_type", "group"] },
@@ -1596,8 +1602,10 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
       ? event.maxApplications - (event.registrationCount || 0)
       : null,
     teams: formattedTeams,
-    // Build winners list ordered by winnerRank
-    winners: (event.registrations || [])
+    // Get winners from the event's winners field (new approach)
+    winners: event.winners || [],
+    // Fallback winners built from isWinner flags (for backward compatibility)
+    fallbackWinners: (event.registrations || [])
       .filter((r) => r.isWinner)
       .slice()
       .map((reg) => {
