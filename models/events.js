@@ -195,6 +195,34 @@ const EventSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Registration amount cannot be negative"],
     },
+
+    // Winners array for storing event winners
+    winners: [
+      {
+        rank: {
+          type: Number,
+          required: true,
+        },
+        teamId: {
+          type: String,
+          required: false, // For group events
+        },
+        teamName: {
+          type: String,
+          required: false, // For group events
+        },
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Users",
+          required: false, // For solo events
+        },
+      },
+    ],
+
+    winnersUpdatedAt: {
+      type: Date,
+      required: false,
+    },
   },
   { timestamps: true }
 );

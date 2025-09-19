@@ -2,6 +2,8 @@ const catchAsyncError = require("../middlewares/catchAsyncError");
 const ErrorHandler = require("../utils/errorHandler");
 const mongoose = require("mongoose");
 
+console.log("=== AdminController loaded with NEW updateEventWinners function ===", new Date().toISOString());
+
 const EventModel = require("../models/events");
 const UserModel = require("../models/users");
 const TeamModel = require("../models/teams");
@@ -2787,134 +2789,154 @@ const updateEventAttendance = catchAsyncError(async (req, res, next) => {
 
 // Update winners for an event (Admin only)
 const updateEventWinners = catchAsyncError(async (req, res, next) => {
+  console.log("=== NEW updateEventWinners function called ===");
   const { eventId } = req.params;
-  // expected body: [{ userId, winnerRank }] for solo events OR [{ groupId, winnerRank }] for group events
   const { winners } = req.body;
 
+  console.log("EventId:", eventId);
+  console.log("Winners data received:", JSON.stringify(winners, null, 2));
+
   if (!eventId || !Array.isArray(winners)) {
+    console.log("Invalid input - missing eventId or winners data");
     return next(new ErrorHandler("Missing eventId or winners data", 400));
   }
 
-  // Load event with applications
+  // Load event
   const event = await EventModel.findOne({ event_id: eventId });
   if (!event) return next(new ErrorHandler("Event not found", 404));
 
-  // Prepare mapping of userId -> rank for easy lookup
-  const winnerRankByUserId = new Map();
-  const winnerUserIds = new Set();
-
-  // Helper to normalize id to string
-  const idToString = (id) => (id ? id.toString() : null);
-
-  // First pass: interpret winners payload and collect userIds (for group winners expand to member userIds)
-  for (const w of winners) {
-    const rank = Number.isFinite(w.winnerRank) ? w.winnerRank : null;
-    if (w.userId) {
-      const uidStr = idToString(w.userId);
-      if (uidStr) {
-        winnerRankByUserId.set(
-          uidStr,
-          rank || winnerRankByUserId.get(uidStr) || winnerRankByUserId.size + 1
-        );
-        winnerUserIds.add(uidStr);
-      }
-    } else if (w.groupId || w.groupName) {
-      // expand group/team to member userIds from the event's applications
-      const gidStr = w.groupId ? idToString(w.groupId) : null;
-      for (const app of event.applications) {
-        const appTeamId = idToString(app.teamId) || idToString(app.groupId);
-        const appTeamName = app.teamName || app.groupName;
-        const matches = gidStr
-          ? appTeamId === gidStr
-          : appTeamName && w.groupName && appTeamName === w.groupName;
-        if (matches && app.userId) {
-          const uidStr = idToString(app.userId);
-          winnerRankByUserId.set(
-            uidStr,
-            rank ||
-              winnerRankByUserId.get(uidStr) ||
-              winnerRankByUserId.size + 1
-          );
-          winnerUserIds.add(uidStr);
-        }
-      }
-    }
-  }
-
-  // Build new applications array with updated isWinner and winnerRank per application
-  const newApplications = event.applications.map((app) => {
-    const appObj = app.toObject ? app.toObject() : { ...app };
-    const uidStr = idToString(appObj.userId);
-    if (uidStr && winnerUserIds.has(uidStr)) {
-      appObj.isWinner = true;
-      appObj.winnerRank = winnerRankByUserId.get(uidStr) || 1;
-    } else {
-      appObj.isWinner = false;
-      appObj.winnerRank = null;
-    }
-    return appObj;
+  console.log("Found event:", {
+    _id: event._id,
+    event_id: event.event_id, 
+    name: event.name,
+    currentWinners: event.winners || "No winners field yet"
   });
 
-  // Persist applications array atomically
-  await EventModel.updateOne(
+  // Prepare winners array - store team IDs for group events, user IDs for solo events
+  const winnersArray = [];
+
+  for (const winner of winners) {
+    const winnerEntry = {
+      rank: winner.winnerRank || winner.position || winnersArray.length + 1,
+    };
+
+    if (winner.groupId || winner.teamId) {
+      // Group event - store team/group ID
+      winnerEntry.teamId = winner.groupId || winner.teamId;
+      winnerEntry.teamName = winner.groupName || winner.teamName;
+    } else if (winner.userId) {
+      // Solo event - store user ID
+      winnerEntry.userId = winner.userId;
+    }
+
+    winnersArray.push(winnerEntry);
+  }
+
+  // Sort winners by rank
+  winnersArray.sort((a, b) => (a.rank || Infinity) - (b.rank || Infinity));
+
+  console.log("Final winnersArray to be saved:", JSON.stringify(winnersArray, null, 2));
+
+  // Update the event with the new winners array field
+  const updateResult = await EventModel.updateOne(
     { event_id: eventId },
-    { $set: { applications: newApplications } }
+    { 
+      $set: { 
+        winners: winnersArray,
+        winnersUpdatedAt: new Date()
+      } 
+    }
   );
 
-  // Update user documents: for users in this event set isWinner true/false according to new winners
-  const allUserIds = event.applications
-    .map((a) => a.userId)
-    .filter(Boolean)
-    .map((id) =>
-      mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
-    );
-  const winnersObjectIds = Array.from(winnerUserIds).map(
-    (id) => new mongoose.Types.ObjectId(id)
-  );
-  const nonWinners = allUserIds.filter(
-    (id) => !winnersObjectIds.some((w) => w.toString() === id.toString())
-  );
+  console.log("Event update result:", updateResult);
 
-  if (winnersObjectIds.length > 0) {
-    await UserModel.updateMany(
-      { _id: { $in: winnersObjectIds } },
-      { $set: { isWinner: true } }
+  // Verify the update by fetching the document again
+  const updatedEvent = await EventModel.findOne({ event_id: eventId });
+  console.log("Verification - Event after update:", {
+    _id: updatedEvent._id,
+    event_id: updatedEvent.event_id,
+    winners: updatedEvent.winners,
+    winnersUpdatedAt: updatedEvent.winnersUpdatedAt
+  });
+
+  // Since applications array is empty, we need to update the teams collection for winners
+  // For teams, mark the teams as winners in the teams collection
+  for (const winnerEntry of winnersArray) {
+    if (winnerEntry.teamId) {
+      console.log(`Updating team ${winnerEntry.teamId} as winner with rank ${winnerEntry.rank}`);
+      await TeamModel.updateMany(
+        { 
+          eventId: event._id,
+          $or: [
+            { _id: new mongoose.Types.ObjectId(winnerEntry.teamId) },
+            { teamId: winnerEntry.teamId }
+          ]
+        },
+        { 
+          $set: { 
+            isWinner: true, 
+            winnerRank: winnerEntry.rank 
+          } 
+        }
+      );
+      
+      // Also update individual users in the team
+      const teams = await TeamModel.find({
+        eventId: event._id,
+        $or: [
+          { _id: new mongoose.Types.ObjectId(winnerEntry.teamId) },
+          { teamId: winnerEntry.teamId }
+        ]
+      }).populate(['leader', 'members']);
+      
+      for (const team of teams) {
+        const userIds = [];
+        if (team.leader) userIds.push(team.leader._id);
+        if (team.members) userIds.push(...team.members.map(m => m._id));
+        
+        if (userIds.length > 0) {
+          console.log(`Updating ${userIds.length} users in team ${winnerEntry.teamId} as winners`);
+          await UserModel.updateMany(
+            { _id: { $in: userIds } },
+            { $set: { isWinner: true } }
+          );
+        }
+      }
+    } else if (winnerEntry.userId) {
+      // For individual events, update user directly
+      console.log(`Updating user ${winnerEntry.userId} as winner with rank ${winnerEntry.rank}`);
+      await UserModel.updateOne(
+        { _id: new mongoose.Types.ObjectId(winnerEntry.userId) },
+        { $set: { isWinner: true } }
+      );
+    }
+  }
+
+  // Reset non-winners in teams collection for this event
+  const winnerTeamIds = winnersArray.filter(w => w.teamId).map(w => w.teamId);
+  if (winnerTeamIds.length > 0) {
+    await TeamModel.updateMany(
+      { 
+        eventId: event._id,
+        _id: { $nin: winnerTeamIds.map(id => new mongoose.Types.ObjectId(id)) }
+      },
+      { 
+        $set: { 
+          isWinner: false, 
+          winnerRank: null 
+        } 
+      }
     );
   }
-  if (nonWinners.length > 0) {
-    await UserModel.updateMany(
-      { _id: { $in: nonWinners } },
-      { $set: { isWinner: false } }
-    );
-  }
 
-  // Fetch the updated event and build a winners array to return to the client.
-  try {
-    const updatedEvent = await EventModel.findOne({ event_id: eventId }).lean();
-    const updatedApps = Array.isArray(updatedEvent?.applications)
-      ? updatedEvent.applications
-      : [];
-
-    const winnersOut = updatedApps
-      .filter((a) => a && a.isWinner)
-      .map((a) => ({
-        userId: a.userId,
-        teamId: a.teamId,
-        winnerRank: typeof a.winnerRank === "number" ? a.winnerRank : null,
-      }))
-      .sort((x, y) => (x.winnerRank ?? Infinity) - (y.winnerRank ?? Infinity));
-
-    return res.status(200).json({
-      success: true,
-      message: "Winners updated",
-      winners: winnersOut,
-      event: { event_id: updatedEvent.event_id, name: updatedEvent.name },
-    });
-  } catch (err) {
-    // If building the response fails, still return success for persistence but log error
-    console.error("Failed to fetch updated winners after update:", err);
-    return res.status(200).json({ success: true, message: "Winners updated" });
-  }
+  // Return response with the new winners array
+  console.log("=== Winners update completed successfully ===");
+  return res.status(200).json({
+    success: true,
+    message: "Winners updated successfully",
+    winners: winnersArray,
+    event: { event_id: event.event_id, name: event.name },
+  });
 });
 
 // Get registrations for a specific event (Admin only)
