@@ -34,6 +34,8 @@ const {
   createAdmin,
   getEventsForAdminAssignment,
   getCollegeRegistrationStats,
+  getEventParticipants,
+  updateAttendance,
   // changeAdminPassword,
 } = require("../controllers/adminController");
 const {
@@ -89,16 +91,20 @@ router
   .delete(isAuthenticatedUser, authorizeRoles("admin"), deleteEvent);
 
 router
-  .route("/admin/events/:eventId/attendance")
-  .put(isAuthenticatedUser, authorizeRoles("admin"), updateEventAttendance);
-
-router
   .route("/admin/events/:eventId/winners")
   .put(isAuthenticatedUser, authorizeRoles("admin"), updateEventWinners);
 
 router
   .route("/admin/events/:eventId/registrations")
   .get(isAuthenticatedUser, authorizeRoles("admin"), getEventRegistrations);
+
+router
+  .route("/admin/events/:eventId/participants")
+  .get(isAuthenticatedUser, authorizeRoles("admin"), getEventParticipants);
+
+router
+  .route("/admin/events/:eventId/attendance")
+  .put(isAuthenticatedUser, authorizeRoles("admin"), updateAttendance);
 
 // New route: get a single event with aggregated registrations and teams
 router

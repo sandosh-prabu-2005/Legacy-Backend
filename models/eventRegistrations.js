@@ -131,6 +131,17 @@ const eventRegistrationSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+
+    // Attendance tracking - added during attendance marking, not registration
+    isPresent: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    attendanceMarkedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true, // Adds createdAt and updatedAt

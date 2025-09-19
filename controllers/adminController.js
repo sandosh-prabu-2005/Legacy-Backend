@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const EventModel = require("../models/events");
 const UserModel = require("../models/users");
 const TeamModel = require("../models/teams");
+const EventRegistration = require("../models/eventRegistrations");
 const sendEmail = require("../utils/email");
 const crypto = require("crypto");
 
@@ -3351,6 +3352,133 @@ const getCollegeRegistrationStats = catchAsyncError(async (req, res, next) => {
   }
 });
 
+// Get event participants from EventRegistrations collection
+const getEventParticipants = catchAsyncError(async (req, res, next) => {
+  const { eventId } = req.params;
+
+  try {
+    console.log("Fetching participants for event:", eventId);
+
+    // Import EventRegistration model
+    const EventRegistration = require("../models/eventRegistrations");
+
+    // First, find the event to get its ObjectId
+    const event = await EventModel.findOne({ event_id: eventId });
+    if (!event) {
+      return next(new ErrorHandler("Event not found", 404));
+    }
+
+    // Fetch participants from EventRegistrations collection
+    const participants = await EventRegistration.find({ 
+      eventId: event._id 
+    }).populate('registrantId', 'name email phoneNumber college city dept year level degree gender');
+
+    console.log(`Found ${participants.length} participants for event ${eventId}`);
+
+    // Transform the data to include registrant information
+    const participantsWithRegistrant = participants.map(participant => ({
+      ...participant.toObject(),
+      userId: participant._id, // Use participant document _id for frontend compatibility
+      registrant: participant.registrantId ? {
+        name: participant.registrantId.name,
+        email: participant.registrantId.email,
+        phoneNumber: participant.registrantId.phoneNumber,
+        college: participant.registrantId.college,
+        city: participant.registrantId.city,
+        dept: participant.registrantId.dept,
+        year: participant.registrantId.year,
+        level: participant.registrantId.level,
+        degree: participant.registrantId.degree,
+        gender: participant.registrantId.gender
+      } : null,
+      // Ensure attendance fields exist (for existing documents that might not have them)
+      isPresent: participant.isPresent || false,
+      attendanceMarkedAt: participant.attendanceMarkedAt || null
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        participants: participantsWithRegistrant,
+        totalParticipants: participants.length,
+        eventId: eventId,
+        eventName: event.name
+      }
+    });
+
+  } catch (error) {
+    console.error("Error in getEventParticipants:", error);
+    return next(new ErrorHandler("Failed to fetch event participants", 500));
+  }
+});
+
+// Update attendance for event participants
+const updateAttendance = catchAsyncError(async (req, res, next) => {
+  const { eventId } = req.params;
+  const { attendance } = req.body; // Array of {userId: registrantId, isPresent: boolean}
+
+  try {
+    // First, find the event to get its ObjectId
+    const event = await EventModel.findOne({ event_id: eventId });
+    if (!event) {
+      return next(new ErrorHandler("Event not found", 404));
+    }
+
+    // Update attendance for each participant
+    const updatePromises = attendance.map(async (attendanceRecord) => {
+      const { userId, isPresent } = attendanceRecord;
+      
+      try {
+        // Convert userId string to ObjectId
+        const objectId = new mongoose.Types.ObjectId(userId);
+        
+        // Update the EventRegistration document by _id
+        const updateResult = await EventRegistration.updateOne(
+          { 
+            _id: objectId
+          },
+          { 
+            $set: { 
+              isPresent: isPresent,
+              attendanceMarkedAt: new Date()
+            }
+          },
+          { 
+            upsert: false
+          }
+        );
+        
+        return updateResult;
+        
+      } catch (error) {
+        console.error(`Error updating attendance for ${userId}:`, error);
+        return { matchedCount: 0, modifiedCount: 0, error: error.message };
+      }
+    });
+
+    const results = await Promise.all(updatePromises);
+    const updatedCount = results.filter(result => result.modifiedCount > 0).length;
+    const matchedCount = results.filter(result => result.matchedCount > 0).length;
+    const errorCount = results.filter(result => result.error).length;
+
+    res.status(200).json({
+      success: true,
+      message: `Attendance updated for ${updatedCount} participants`,
+      data: {
+        eventId: eventId,
+        updatedCount: updatedCount,
+        matchedCount: matchedCount,
+        totalRequested: attendance.length,
+        errorCount: errorCount
+      }
+    });
+
+  } catch (error) {
+    console.error("Error in updateAttendance:", error);
+    return next(new ErrorHandler("Failed to update attendance", 500));
+  }
+});
+
 module.exports = {
   createEvent,
   getAllEventsWithApplications,
@@ -3388,4 +3516,6 @@ module.exports = {
   getEventsForAdminAssignment,
   getCollegeRegistrationStats,
   changeAdminPassword,
+  getEventParticipants,
+  updateAttendance,
 };
