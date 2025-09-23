@@ -1845,6 +1845,246 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
     }
   }
 
+  // Format winners - handle both direct winners array and isWinner flags in registrations
+  let formattedWinners = [];
+  
+  if (event.winners && Array.isArray(event.winners) && event.winners.length > 0) {
+    // Use direct winners array from event document (preferred for new format)
+    if (event.event_type === "group") {
+      // For group events, we need to send individual member records for each winner team
+      // so that the frontend can process them correctly
+      const TeamModel = require("../models/teams");
+      
+      const allWinnerMembers = [];
+      
+      for (const winner of event.winners) {
+        try {
+          const team = await TeamModel.findById(winner.teamId).lean();
+          
+          console.log(`DEBUG: Fetching winner team ${winner.teamId}:`, {
+            teamFound: !!team,
+            teamName: team?.teamName || team?.name,
+            leaderObjectId: team?.leader?.toString(),
+            membersCount: team?.members?.length || 0
+          });
+          
+          if (team) {
+            // Get all team members (including leader)
+            const allMembers = [];
+            
+            // First, add all team members from the members array (they have direct information)
+            if (team.members && Array.isArray(team.members)) {
+              team.members.forEach(member => {
+                allMembers.push({
+                  _id: member._id || `direct-${member.name}-${Math.random().toString(36).slice(2, 8)}`,
+                  name: member.name || "Unknown",
+                  email: member.email || "Unknown",
+                  dept: member.dept || "Unknown",
+                  year: member.year || "Unknown",
+                  college: "Unknown", // Direct members don't have college info
+                  degree: member.degree || "Unknown",
+                  gender: member.gender || "Unknown",
+                  mobile: member.mobile || "Unknown",
+                  role: "Member"
+                });
+              });
+            }
+            
+            // Handle leader - try to get leader info from User collection
+            if (team.leader) {
+              try {
+                const leaderUser = await UserModel.findById(team.leader)
+                  .select('name email dept year college')
+                  .lean();
+                
+                if (leaderUser) {
+                  // Check if this leader is already in our members array (by email match)
+                  const existingMemberIndex = allMembers.findIndex(member => 
+                    member.email && leaderUser.email && 
+                    member.email.toLowerCase().trim() === leaderUser.email.toLowerCase().trim()
+                  );
+                  
+                  if (existingMemberIndex !== -1) {
+                    // Leader found in members array, update their info and role
+                    allMembers[existingMemberIndex] = {
+                      ...allMembers[existingMemberIndex],
+                      name: leaderUser.name || allMembers[existingMemberIndex].name,
+                      college: leaderUser.college || "Unknown",
+                      role: "Leader"
+                    };
+                    console.log(`DEBUG: Leader ${leaderUser.name} found in members array, updated role`);
+                  } else {
+                    // Leader not in members array, add them separately
+                    allMembers.push({
+                      _id: leaderUser._id,
+                      name: leaderUser.name || "Unknown",
+                      email: leaderUser.email || "Unknown",
+                      dept: leaderUser.dept || "Unknown",
+                      year: leaderUser.year || "Unknown",
+                      college: leaderUser.college || "Unknown",
+                      role: "Leader"
+                    });
+                    console.log(`DEBUG: Leader ${leaderUser.name} added separately`);
+                  }
+                } else {
+                  // Leader not found in User collection
+                  if (allMembers.length > 0) {
+                    allMembers[0].role = "Leader";
+                    console.log(`DEBUG: Made first member ${allMembers[0].name} the leader`);
+                  }
+                }
+              } catch (err) {
+                console.log(`DEBUG: Error fetching leader ${team.leader}:`, err.message);
+                if (allMembers.length > 0) {
+                  allMembers[0].role = "Leader";
+                }
+              }
+            } else if (allMembers.length > 0) {
+              allMembers[0].role = "Leader";
+            }
+            
+            console.log(`DEBUG: Final allMembers for team ${winner.teamId}:`, allMembers.map(m => ({
+              name: m.name,
+              email: m.email,
+              role: m.role
+            })));
+            
+            // Create individual winner member records that frontend expects
+            // Frontend groups by teamId, so we create separate records for each member
+            allMembers.forEach((member, index) => {
+              allWinnerMembers.push({
+                // Individual member as winner record - frontend expects this structure
+                _id: member._id,
+                userId: member._id,
+                teamId: winner.teamId,
+                teamName: winner.teamName || team.teamName || team.name || "Team",
+                name: member.name,        // Frontend resolveName() looks for .name
+                userName: member.name,    // Frontend resolveName() looks for .userName
+                email: member.email,
+                userEmail: member.email,  // Frontend resolveEmail() looks for .userEmail
+                dept: member.dept,
+                userDept: member.dept,    // Frontend resolveDept() looks for .userDept
+                year: member.year,
+                userYear: member.year,    // Frontend resolveYear() looks for .userYear
+                college: member.college,
+                userCollege: member.college, // Frontend resolveCollege() looks for .userCollege
+                gender: member.gender,
+                userGender: member.gender,   // Frontend resolveGender() looks for .userGender
+                mobile: member.mobile,
+                userMobile: member.mobile,   // Frontend resolveMobile() looks for .userMobile
+                role: member.role,
+                rank: winner.rank,
+                winnerRank: winner.rank,
+                isWinner: true,
+                // Add index to maintain member order in frontend
+                memberIndex: index
+              });
+            });
+            
+          } else {
+            // Team not found, create placeholder winner record
+            allWinnerMembers.push({
+              teamId: winner.teamId,
+              teamName: winner.teamName || "Team",
+              name: "Team not found",
+              userName: "Team not found",
+              email: "Unknown",
+              userEmail: "Unknown",
+              dept: "Unknown",
+              userDept: "Unknown",
+              year: "Unknown",
+              userYear: "Unknown",
+              college: "Unknown",
+              userCollege: "Unknown",
+              rank: winner.rank,
+              winnerRank: winner.rank,
+              isWinner: true
+            });
+          }
+        } catch (err) {
+          console.error(`Error fetching team details for winner ${winner.teamId}:`, err);
+          // Create error placeholder
+          allWinnerMembers.push({
+            teamId: winner.teamId,
+            teamName: winner.teamName || "Team",
+            name: "Error loading team",
+            userName: "Error loading team", 
+            email: "Unknown",
+            userEmail: "Unknown",
+            dept: "Unknown",
+            userDept: "Unknown",
+            year: "Unknown",
+            userYear: "Unknown",
+            college: "Unknown",
+            userCollege: "Unknown",
+            rank: winner.rank,
+            winnerRank: winner.rank,
+            isWinner: true
+          });
+        }
+      }
+      
+      formattedWinners = allWinnerMembers;
+      
+    } else {
+      // For solo events, populate user details for each winner
+      const UserModel = require("../models/users");
+      
+      formattedWinners = await Promise.all(
+        event.winners.map(async (winner) => {
+          try {
+            // For solo events, teamId might actually be userId
+            const user = await UserModel.findById(winner.teamId || winner.userId).lean();
+            
+            if (user) {
+              return {
+                rank: winner.rank,
+                userId: user._id,
+                name: user.name || "Unknown",
+                email: user.email || "Unknown",
+                dept: user.dept || "Unknown",
+                year: user.year || "Unknown",
+                college: user.college || "Unknown",
+                mobile: user.phoneNumber || user.mobile || null,
+              };
+            } else {
+              return {
+                rank: winner.rank,
+                userId: winner.teamId || winner.userId,
+                name: winner.teamName || "Unknown", // fallback to teamName which might be participant name
+                email: "Unknown",
+                dept: "Unknown",
+                year: "Unknown",
+                college: "Unknown",
+                mobile: null,
+              };
+            }
+          } catch (err) {
+            console.error(`Error fetching user details for winner ${winner.teamId || winner.userId}:`, err);
+            return {
+              rank: winner.rank,
+              userId: winner.teamId || winner.userId,
+              name: winner.teamName || "Unknown",
+              email: "Unknown",
+              dept: "Unknown",
+              year: "Unknown",
+              college: "Unknown",
+              mobile: null,
+            };
+          }
+        })
+      );
+    }
+    
+    // Sort winners by rank
+    formattedWinners.sort((a, b) => (a.rank || Infinity) - (b.rank || Infinity));
+  } else {
+    // Fallback to old method - check isWinner flags in registrations
+    formattedWinners = formattedRegistrations
+      .filter((r) => r.isWinner)
+      .sort((a, b) => (a.winnerRank ?? Infinity) - (b.winnerRank ?? Infinity));
+  }
+
   // Format final response
   const formattedEvent = {
     ...event,
@@ -1855,9 +2095,7 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
     registeredTeamsCount: teams.length,
     teams,
     registrations: formattedRegistrations,
-    winners: formattedRegistrations
-      .filter((r) => r.isWinner)
-      .sort((a, b) => (a.winnerRank ?? Infinity) - (b.winnerRank ?? Infinity)),
+    winners: formattedWinners,
   };
 
   res.status(200).json({ success: true, event: formattedEvent });
