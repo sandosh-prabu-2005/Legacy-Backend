@@ -189,8 +189,8 @@ exports.registerEventWithParticipants = catchAsyncError(
     }
 
     console.log("varudhu bha=============");
-    // Check if event exists
-    const event = await Event.findById(eventId);
+    // Check if event exists (support event_id string like 'L002')
+    const event = await Event.findOne({ event_id: eventId });
     if (!event) {
       return next(new ErrorHandler("Event not found", 404));
     }
@@ -319,7 +319,7 @@ exports.registerEventWithParticipants = catchAsyncError(
     const registrationPromises = participants.map((participant) => {
       return EventRegistration.create({
         // Event Information
-        eventId,
+        eventId: event._id, // Use ObjectId, not event_id string
         eventName: event.name,
         eventType: event.event_type,
 
