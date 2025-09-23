@@ -803,10 +803,10 @@ const getDashboardStats = catchAsyncError(async (req, res, next) => {
   }
 
   // Super Admin: Get statistics using EventRegistrations collection (like college registrations page)
-  const EventRegistrationModel = require("../models/eventRegistrations");
-
+  // Use the already imported EventRegistration model
+  
   // Get all registrations from EventRegistrations collection
-  const allRegistrations = await EventRegistrationModel.find({}).lean();
+  const allRegistrations = await EventRegistration.find({}).lean();
 
   // Calculate total registrations (total individual registrations)
   const totalRegistrations = allRegistrations.length;
@@ -994,6 +994,79 @@ const getAllAdmins = catchAsyncError(async (req, res, next) => {
     admins,
     count: admins.length,
   });
+});
+
+// Get all event registrations directly from EventRegistrations collection (Super Admin only)
+const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
+  try {
+    console.log("=== getAllEventRegistrations called ===");
+    
+    // Set request timeout for 30 seconds
+    req.setTimeout(30000);
+    
+    // First, get all registrations without populate
+    const registrations = await EventRegistration.find({})
+      .lean()
+      .sort({ createdAt: -1 });
+
+    console.log(`Found ${registrations.length} registrations in EventRegistrations collection`);
+    
+    if (registrations.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          registrations: [],
+          totalRegistrations: 0,
+        }
+      });
+    }
+
+    // Get unique event and user IDs for bulk queries
+    const eventIds = [...new Set(registrations.map(r => r.eventId).filter(Boolean))];
+    const userIds = [...new Set(registrations.map(r => r.registrantId).filter(Boolean))];
+    
+    console.log(`Bulk fetching ${eventIds.length} events and ${userIds.length} users`);
+    
+    // Bulk fetch events and users
+    const [events, users] = await Promise.all([
+      EventModel.find({ _id: { $in: eventIds } })
+        .select("name event_id event_type clubInCharge")
+        .lean(),
+      UserModel.find({ _id: { $in: userIds } })
+        .select("name email college")
+        .lean()
+    ]);
+    
+    console.log(`Fetched ${events.length} events and ${users.length} users`);
+    
+    // Create lookup maps for O(1) access
+    const eventMap = new Map(events.map(e => [e._id.toString(), e]));
+    const userMap = new Map(users.map(u => [u._id.toString(), u]));
+    
+    // Populate registrations efficiently
+    const registrationsWithEventData = registrations.map(reg => ({
+      ...reg,
+      eventId: reg.eventId ? eventMap.get(reg.eventId.toString()) : null,
+      registrantId: reg.registrantId ? userMap.get(reg.registrantId.toString()) : null
+    }));
+    
+    // Log sample for debugging
+    if (registrationsWithEventData.length > 0) {
+      console.log("Sample registration:", JSON.stringify(registrationsWithEventData[0], null, 2));
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        registrations: registrationsWithEventData,
+        totalRegistrations: registrationsWithEventData.length,
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching all event registrations:", error);
+    return next(new ErrorHandler("Failed to fetch event registrations", 500));
+  }
 });
 
 // Get detailed events with registrations (Super Admin only)
@@ -1555,8 +1628,7 @@ const getEventWithRegistrations = catchAsyncError(async (req, res, next) => {
   // Fetch registrant information from EventRegistrations model
   let eventRegistrations = [];
   try {
-    const EventRegistrationModel = require("../models/eventRegistrations");
-    eventRegistrations = await EventRegistrationModel.find({
+    eventRegistrations = await EventRegistration.find({
       eventId: event._id,
     })
       .populate("registrantId", "name email")
@@ -1725,8 +1797,7 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
   }
 
   // Fetch comprehensive registration data from EventRegistrations model
-  const EventRegistrationModel = require("../models/eventRegistrations");
-  const registrations = await EventRegistrationModel.find({
+  const registrations = await EventRegistration.find({
     eventId: event._id,
   })
     .populate("registrantId", "name email college")
@@ -3564,8 +3635,6 @@ const getCollegeRegistrationStats = catchAsyncError(async (req, res, next) => {
   // allow admins and superadmins
   if (!user) return next(new ErrorHandler("Not authenticated", 401));
 
-  const EventRegistrationModel = require("../models/eventRegistrations");
-
   // If admin is event-specific, limit to that event
   const isEventSpecificAdmin =
     user.role === "admin" && !user.isSuperAdmin && user.assignedEvent;
@@ -3583,7 +3652,7 @@ const getCollegeRegistrationStats = catchAsyncError(async (req, res, next) => {
     }
 
     // Get all registrations that match our criteria
-    const registrations = await EventRegistrationModel.find(query).lean();
+    const registrations = await EventRegistration.find(query).lean();
     console.log("Found registrations count:", registrations.length);
     console.log("Sample registrations:", registrations.slice(0, 3));
 
@@ -3762,6 +3831,7 @@ module.exports = {
   getDashboardStats,
   getAdminsByClub,
   getAllAdmins,
+  getAllEventRegistrations,
   getEventsWithRegistrations,
   getEventWithRegistrations,
   getEventWithRegistrationsV2,
