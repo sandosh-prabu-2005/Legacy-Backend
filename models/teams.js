@@ -57,6 +57,13 @@ const TeamSchema = new mongoose.Schema(
             return !this.userId; // Required for direct participants
           }
         },
+        level: {
+          type: String,
+          enum: ["UG", "PG", "PhD"],
+          required: function() {
+            return !this.userId; // Required for direct participants
+          }
+        },
         gender: {
           type: String,
           enum: ["Male", "Female", "Other"],

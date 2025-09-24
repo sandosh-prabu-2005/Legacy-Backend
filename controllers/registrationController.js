@@ -292,6 +292,7 @@ exports.registerEventWithParticipants = catchAsyncError(
               : participant.dept,
           year: participant.year,
           degree: participant.degree,
+          level: participant.level,
           gender: participant.gender,
           registrationType: "direct",
         })),
