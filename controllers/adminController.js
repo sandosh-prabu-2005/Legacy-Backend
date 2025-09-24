@@ -1033,7 +1033,7 @@ const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
         .select("name event_id event_type clubInCharge")
         .lean(),
       UserModel.find({ _id: { $in: userIds } })
-        .select("name email college")
+        .select("name email college phoneNumber")
         .lean()
     ]);
     
