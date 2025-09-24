@@ -805,54 +805,30 @@ exports.getCollegeEventsForEdit = catchAsyncError(async (req, res, next) => {
   }
 
   try {
-    // Get all active events
+    // Get all active events - no longer filtering by college registrations
     const allEvents = await Event.find({
       isActive: true,
       isArchived: false,
     }).select("_id event_name event_type description");
 
-    // Get all events that the college has registrations for
-    const collegeRegistrations = await EventRegistration.find({
-      collegeName: user.college,
-      isActive: true,
-    }).distinct("eventId");
-
-    // Also get team events from Teams collection
-    const collegeTeamEvents = await Teams.find({
-      collegeName: user.college,
-      isRegistered: true,
-    }).distinct("eventId");
-
-    // Combine all event IDs that the college has registered for
-    const registeredEventIds = [
-      ...new Set([
-        ...collegeRegistrations.map((id) => id.toString()),
-        ...collegeTeamEvents.map((id) => id.toString()),
-      ]),
-    ];
-
-    // Format events with additional info
+    // Format events without college registration restrictions
     const formattedEvents = allEvents.map((event) => ({
       _id: event._id,
       name: event.event_name,
       event_name: event.event_name,
       event_type: event.event_type,
       description: event.description,
-      isRegisteredByCollege: registeredEventIds.includes(event._id.toString()),
+      isRegisteredByCollege: false, // Always false since college-level restrictions are removed
       displayName: `${event.event_name} (${event.event_type.toUpperCase()})`,
     }));
 
-    // Sort events: college registered events first, then available events
-    formattedEvents.sort((a, b) => {
-      if (a.isRegisteredByCollege && !b.isRegisteredByCollege) return -1;
-      if (!a.isRegisteredByCollege && b.isRegisteredByCollege) return 1;
-      return a.name.localeCompare(b.name);
-    });
+    // Sort events alphabetically
+    formattedEvents.sort((a, b) => a.name.localeCompare(b.name));
 
     res.status(200).json({
       success: true,
       events: formattedEvents,
-      message: "College events fetched successfully",
+      message: "Events fetched successfully",
     });
   } catch (error) {
     console.error("Error fetching college events:", error);
