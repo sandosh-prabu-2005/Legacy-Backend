@@ -130,28 +130,9 @@ const createTeam = catchAsyncError(async (req, res) => {
     });
   }
 
-  // Check if user is already registered for this event
-  const isAlreadyRegistered = await isUserRegisteredForEvent(userId, eventId);
-  if (isAlreadyRegistered) {
-    return res.status(400).json({
-      success: false,
-      message:
-        "You are already registered for this event and cannot create a new team",
-    });
-  }
-
-  // Check if user already has a team for this event (including unregistered teams)
-  const existingTeam = await Teams.findOne({
-    eventId,
-    $or: [{ leader: userId }, { "members.userId": userId }],
-  });
-
-  if (existingTeam) {
-    return res.status(400).json({
-      success: false,
-      message: "You are already part of a team for this event",
-    });
-  }
+  // Allow coordinators to create multiple teams for different participants
+  // Removed user registration and team membership restrictions
+  // Coordinators can now register multiple teams from their college with different participants
 
   // Get leader information to determine team gender
   const leader = await Users.findById(userId);
@@ -213,20 +194,8 @@ const createTeamWithInvites = catchAsyncError(async (req, res) => {
     });
   }
 
-  // Check if user is already in a team for this event
-  const existingTeam = await Teams.findOne({
-    eventId,
-    $or: [{ leader: userId }, { "members.userId": userId }],
-    isInvalidated: { $ne: true }, // Exclude invalidated teams
-  });
-
-  if (existingTeam) {
-    return res.status(400).json({
-      success: false,
-      message:
-        "You are already part of a team for this event. Please leave your current team first.",
-    });
-  }
+  // Allow coordinators to create multiple teams for different participants
+  // Removed team membership restrictions for coordinators
 
   // Create the team
   const team = new Teams({

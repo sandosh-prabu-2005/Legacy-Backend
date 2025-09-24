@@ -271,21 +271,9 @@ exports.registerEventWithParticipants = catchAsyncError(
     let teamId = null;
     // For group events, create a team record using existing team functionality
     if (event.event_type === "group") {
-      // Check if user already has a team for this event
-      const existingTeam = await Teams.findOne({
-        eventId,
-        leader: registrantId,
-        isRegistered: true,
-      });
-
-      if (existingTeam) {
-        return next(
-          new ErrorHandler(
-            "You already have a registered team for this event",
-            400
-          )
-        );
-      }
+      // Allow multiple teams from same college - removed team leader restriction
+      // Users can now register multiple teams with different participants for the same event
+      // Only individual user participation is restricted by isUserRegisteredForEvent check above
 
       // Create team with direct members (using our existing team model)
       const team = await Teams.create({
