@@ -1090,6 +1090,14 @@ const getEventsWithRegistrations = catchAsyncError(async (req, res, next) => {
       },
     },
     {
+      $lookup: {
+        from: "eventregistrations",
+        localField: "_id",
+        foreignField: "eventId",
+        as: "eventRegistrations",
+      },
+    },
+    {
       $project: {
         name: 1,
         event_id: 1,
@@ -1104,12 +1112,40 @@ const getEventsWithRegistrations = catchAsyncError(async (req, res, next) => {
             then: {
               $size: {
                 $filter: {
-                  input: "$eventTeams",
-                  cond: { $eq: ["$$this.isRegistered", true] },
+                  input: "$eventRegistrations",
+                  cond: { $eq: ["$$this.eventType", "group"] },
                 },
               },
             },
-            else: { $size: "$applications" },
+            else: {
+              $size: {
+                $filter: {
+                  input: "$eventRegistrations",
+                  cond: { $eq: ["$$this.eventType", "solo"] },
+                },
+              },
+            },
+          },
+        },
+        participantCount: {
+          $cond: {
+            if: { $eq: ["$event_type", "group"] },
+            then: {
+              $size: {
+                $filter: {
+                  input: "$eventRegistrations",
+                  cond: { $eq: ["$$this.eventType", "group"] },
+                },
+              },
+            },
+            else: {
+              $size: {
+                $filter: {
+                  input: "$eventRegistrations",
+                  cond: { $eq: ["$$this.eventType", "solo"] },
+                },
+              },
+            },
           },
         },
         registeredTeamsCount: {
