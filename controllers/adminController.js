@@ -1841,7 +1841,9 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
 
   // Build registrations array with complete information
   const formattedRegistrations = registrations.map((reg) => ({
-    userId: reg.participantId || null,
+    _id: reg._id, // EventRegistration._id
+    userId: reg._id, // For solo events, this EventRegistration._id is used in winners array
+    registrationId: reg._id, // Alternative field name
     teamId: reg.teamId || null,
     registeredAt: reg.createdAt,
     // Participant information
@@ -2134,49 +2136,81 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
       formattedWinners = allWinnerMembers;
       
     } else {
-      // For solo events, populate user details for each winner
-      const UserModel = require("../models/users");
-      
+      // For solo events, populate participant details from eventregistrations collection
+      // The userId in winners array refers to _id in eventregistrations collection
       formattedWinners = await Promise.all(
         event.winners.map(async (winner) => {
           try {
-            // For solo events, teamId might actually be userId
-            const user = await UserModel.findById(winner.teamId || winner.userId).lean();
+            // For solo events, userId in winners array is the eventRegistration _id
+            const eventRegistration = await EventRegistration.findById(winner.userId).lean();
             
-            if (user) {
+            if (eventRegistration) {
               return {
                 rank: winner.rank,
-                userId: user._id,
-                name: user.name || "Unknown",
-                email: user.email || "Unknown",
-                dept: user.dept || "Unknown",
-                year: user.year || "Unknown",
-                college: user.college || "Unknown",
-                mobile: user.phoneNumber || user.mobile || null,
+                userId: winner.userId, // This is the eventRegistration._id
+                registrationId: eventRegistration._id,
+                name: eventRegistration.participantName || "Unknown",
+                userName: eventRegistration.participantName || "Unknown",
+                email: eventRegistration.participantEmail || "Unknown",
+                userEmail: eventRegistration.participantEmail || "Unknown",
+                dept: eventRegistration.department || "Unknown",
+                userDept: eventRegistration.department || "Unknown",
+                year: eventRegistration.year || "Unknown",
+                userYear: eventRegistration.year || "Unknown",
+                college: eventRegistration.collegeName || "Unknown",
+                userCollege: eventRegistration.collegeName || "Unknown",
+                gender: eventRegistration.gender || "Unknown",
+                mobile: eventRegistration.participantMobile || null,
+                level: eventRegistration.level || "Unknown",
+                degree: eventRegistration.degree || "Unknown",
+                collegeName: eventRegistration.collegeName || "Unknown",
+                participantName: eventRegistration.participantName || "Unknown",
+                participantEmail: eventRegistration.participantEmail || "Unknown",
+                isPresent: eventRegistration.isPresent || false,
+                winnerRank: winner.rank,
               };
             } else {
+              console.warn(`EventRegistration not found for winner userId: ${winner.userId}`);
               return {
                 rank: winner.rank,
-                userId: winner.teamId || winner.userId,
-                name: winner.teamName || "Unknown", // fallback to teamName which might be participant name
+                userId: winner.userId,
+                name: "Unknown",
+                userName: "Unknown", 
                 email: "Unknown",
+                userEmail: "Unknown",
                 dept: "Unknown",
+                userDept: "Unknown",
                 year: "Unknown",
+                userYear: "Unknown",
                 college: "Unknown",
+                userCollege: "Unknown",
+                gender: "Unknown",
                 mobile: null,
+                participantName: "Unknown",
+                participantEmail: "Unknown",
+                winnerRank: winner.rank,
               };
             }
           } catch (err) {
-            console.error(`Error fetching user details for winner ${winner.teamId || winner.userId}:`, err);
+            console.error(`Error fetching eventRegistration details for winner ${winner.userId}:`, err);
             return {
               rank: winner.rank,
-              userId: winner.teamId || winner.userId,
-              name: winner.teamName || "Unknown",
-              email: "Unknown",
+              userId: winner.userId,
+              name: "Unknown",
+              userName: "Unknown",
+              email: "Unknown", 
+              userEmail: "Unknown",
               dept: "Unknown",
+              userDept: "Unknown",
               year: "Unknown",
+              userYear: "Unknown",
               college: "Unknown",
+              userCollege: "Unknown",
+              gender: "Unknown",
               mobile: null,
+              participantName: "Unknown",
+              participantEmail: "Unknown",
+              winnerRank: winner.rank,
             };
           }
         })
