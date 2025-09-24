@@ -66,6 +66,8 @@ const signUpUser = catchAsyncError(async (req, res, next) => {
 
   // Save user first, handle validation errors
   try {
+    // Set user as verified immediately (no OTP required)
+    user.isVerified = true;
     await user.save();
     console.log(`✅ User ${email} created and saved to database successfully`);
   } catch (err) {
@@ -85,45 +87,15 @@ const signUpUser = catchAsyncError(async (req, res, next) => {
     });
   }
 
-  // Generate verification OTP and send email after user is saved
-  const verificationOTP = user.generateVerificationOTP();
-  await user.save({ validateBeforeSave: false });
-
-  try {
-    console.log(`📧 Attempting to send verification OTP to ${email}...`);
-    await sendEmail({
-      email: user.email,
-      subject: "Verify Your Email - OTP Code",
-      message: `Your verification code is: ${verificationOTP}\n\nThis code is valid for 10 minutes.\n\nPlease enter this code on the verification page to complete your registration.`,
-    });
-    console.log(`✅ Verification OTP sent successfully to ${email}`);
-  } catch (err) {
-    console.error(`❌ Failed to send verification OTP to ${email}:`, err);
-    let errorMessage =
-      "Failed to send verification email. Please try again later.";
-    if (err.code === "EAUTH" || err.responseCode === 535) {
-      errorMessage = "Email configuration error. Please contact support.";
-    } else if (err.code === "ECONNECTION" || err.code === "ETIMEDOUT") {
-      errorMessage =
-        "Email service temporarily unavailable. Please try again later.";
-    } else if (err.code === "EMESSAGE" || err.responseCode === 550) {
-      errorMessage = "Invalid email address. Please check and try again.";
-    }
-    return res.status(500).json({
-      success: false,
-      message: errorMessage,
-    });
-  }
-
   res.status(201).json({
     success: true,
     message: isFirstUser
-      ? "🎉 Welcome! You have been automatically made a Super Admin. Please check your email for the verification code."
-      : "User registered successfully. Please check your email for the verification code.",
+      ? "🎉 Welcome! You have been automatically made a Super Admin. Registration completed successfully."
+      : "User registered successfully. You can now login with your credentials.",
     isFirstUser,
     role: user.role,
     isSuperAdmin: user.isSuperAdmin,
-    email: user.email, // Include email for OTP verification
+    email: user.email,
   });
 });
 
