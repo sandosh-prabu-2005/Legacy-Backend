@@ -15,6 +15,7 @@ const {
   getAdminsByClub,
   getAllAdmins,
   getAllEventRegistrations,
+  getWinnersData,
   getEventsWithRegistrations,
   getEventWithRegistrations,
   getEventWithRegistrationsV2,
@@ -58,6 +59,10 @@ router
 router
   .route("/admin/dashboard/all-registrations")
   .get(isAuthenticatedUser, superAdminAuth, getAllEventRegistrations);
+
+router
+  .route("/admin/dashboard/winners")
+  .get(isAuthenticatedUser, superAdminAuth, getWinnersData);
 
 router
   .route("/admin/dashboard/club-stats")

@@ -1069,6 +1069,269 @@ const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
   }
 });
 
+// Get winners data for export - handles solo and group events differently
+const getWinnersData = catchAsyncError(async (req, res, next) => {
+  try {
+    console.log("=== getWinnersData called ===");
+    
+    // Set request timeout for 30 seconds
+    req.setTimeout(30000);
+    
+    // Fetch all events with their applications and winners arrays
+    const events = await EventModel.find({})
+      .select("name event_id event_type clubInCharge applications winners")
+      .lean()
+      .sort({ createdAt: -1 });
+
+    console.log(`Found ${events.length} events to process for winners`);
+    
+    const allWinners = [];
+    
+    for (const event of events) {
+      if (event.event_type === "solo") {
+        // For solo events, get winners from event.winners array
+        // In solo events, userId in winners array refers to EventRegistration._id, not User._id
+        const soloWinners = event.winners || [];
+        
+        for (const winner of soloWinners) {
+          try {
+            // For solo events, userId in winners array is the eventRegistration _id
+            const eventRegistration = await mongoose.model('EventRegistration').findById(winner.userId).lean();
+            
+            if (eventRegistration) {
+              allWinners.push({
+                eventId: event._id,
+                eventName: event.name,
+                eventType: "solo",
+                clubInCharge: event.clubInCharge,
+                winnerRank: winner.rank || null,
+                isWinner: true,
+                // User details from EventRegistration
+                userId: winner.userId, // This is EventRegistration._id
+                participantName: eventRegistration.participantName || "Unknown",
+                participantEmail: eventRegistration.participantEmail || "Unknown",
+                participantMobile: eventRegistration.participantMobile || null,
+                collegeName: eventRegistration.collegeName || "Unknown",
+                department: eventRegistration.department || "Unknown",
+                year: eventRegistration.year || "Unknown",
+                gender: eventRegistration.gender || "Unknown",
+                level: eventRegistration.level || "Unknown",
+                degree: eventRegistration.degree || "Unknown",
+                // Team details - null for solo events
+                teamName: null,
+              });
+            } else {
+              console.warn(`EventRegistration not found for winner userId: ${winner.userId}`);
+            }
+          } catch (err) {
+            console.error(`Error fetching solo winner details for ${winner.userId}:`, err);
+          }
+        }
+        
+        // Also check applications array for legacy winner data
+        const legacyWinners = event.applications?.filter(app => 
+          app.isWinner === true || app.winnerRank != null
+        ) || [];
+        
+        // Get user details for legacy winners
+        const userIds = legacyWinners.map(w => w.userId).filter(Boolean);
+        if (userIds.length > 0) {
+          const users = await UserModel.find({ _id: { $in: userIds } })
+            .select("name email college phoneNumber")
+            .lean();
+          
+          const userMap = new Map(users.map(u => [u._id.toString(), u]));
+          
+          // Process legacy winners from applications
+          for (const winner of legacyWinners) {
+            const user = userMap.get(winner.userId?.toString());
+            if (user) {
+              allWinners.push({
+                eventId: event._id,
+                eventName: event.name,
+                eventType: "solo",
+                clubInCharge: event.clubInCharge,
+                winnerRank: winner.winnerRank || winner.rank || null,
+                isWinner: winner.isWinner || false,
+                // User details
+                userId: winner.userId,
+                participantName: user.name,
+                participantEmail: user.email,
+                participantMobile: user.phoneNumber,
+                collegeName: user.college,
+                // Additional details - not available in User model, will be "Unknown"
+                department: "Unknown",
+                level: "Unknown", 
+                year: "Unknown",
+                // Team details - null for solo events
+                teamName: null,
+              });
+            }
+          }
+        }
+      } else if (event.event_type === "group") {
+        // For group events, get winners from winners array
+        const groupWinners = event.winners || [];
+        
+        for (const winner of groupWinners) {
+          // For each team winner, we need to get the team members
+          const teamId = winner.teamId;
+          if (teamId) {
+            // Find the team
+            const team = await mongoose.model('Teams').findById(teamId)
+              .populate('leader', 'name email college phoneNumber')
+              .populate('members.userId', 'name email college phoneNumber')
+              .populate('registeredBy', 'college') // Populate registeredBy to get college info
+              .lean();
+            
+            if (team) {
+              // For group events, only include team members (leader + members), not the registrant
+              // Collect all user IDs from team members only
+              const memberUserIds = [];
+              team.members.forEach(member => {
+                if (member.userId?._id) memberUserIds.push(member.userId._id);
+              });
+              
+              // Fetch EventRegistrations for team members to get dept, level, year
+              // Note: We look for participantName match since team members might not be registrants
+              let eventRegistrations = [];
+              if (memberUserIds.length > 0) {
+                eventRegistrations = await mongoose.model('EventRegistration').find({
+                  eventId: event._id,
+                  $or: [
+                    { registrantId: { $in: memberUserIds } },
+                    { participantName: { $in: team.members.map(m => m.userId?.name || m.name).filter(Boolean) } }
+                  ]
+                }).lean();
+              }
+              
+              const regMap = new Map();
+              eventRegistrations.forEach(reg => {
+                // Map by registrantId for registered users
+                if (reg.registrantId) {
+                  regMap.set(reg.registrantId.toString(), reg);
+                }
+                // Also map by participantName for fallback
+                if (reg.participantName) {
+                  regMap.set(reg.participantName, reg);
+                }
+              });
+              
+              // Add team leader as winner (only if leader is also a team member)
+              if (team.leader) {
+                // Check if leader is in the members array (not just the registrant)
+                const isLeaderAMember = team.members.some(member => 
+                  member.userId?._id?.toString() === team.leader._id.toString()
+                );
+                
+                if (isLeaderAMember) {
+                  const leaderReg = regMap.get(team.leader._id.toString()) || regMap.get(team.leader.name);
+                  allWinners.push({
+                    eventId: event._id,
+                    eventName: event.name,
+                    eventType: "group",
+                    clubInCharge: event.clubInCharge,
+                    winnerRank: winner.rank || null,
+                    isWinner: true,
+                    // User details - team leader (who is also a member)
+                    userId: team.leader._id,
+                    participantName: team.leader.name,
+                    participantEmail: team.leader.email,
+                    participantMobile: team.leader.phoneNumber,
+                    collegeName: team.registeredBy?.college || "Unknown", // Use registeredBy's college
+                    // Additional details from EventRegistration
+                    department: leaderReg?.department || "Unknown",
+                    level: leaderReg?.level || "Unknown",
+                    year: leaderReg?.year || "Unknown",
+                    // Team details
+                    teamName: winner.teamName || team.teamName,
+                  });
+                }
+              }
+              
+              // Add team members as winners (excluding leader if already added)
+              for (const member of team.members) {
+                // Skip if this member is the leader (already added above)
+                const isLeader = team.leader && member.userId?._id?.toString() === team.leader._id.toString();
+                if (isLeader) continue;
+                
+                if (member.userId) {
+                  const memberReg = regMap.get(member.userId._id.toString()) || regMap.get(member.userId.name);
+                  allWinners.push({
+                    eventId: event._id,
+                    eventName: event.name,
+                    eventType: "group",
+                    clubInCharge: event.clubInCharge,
+                    winnerRank: winner.rank || null,
+                    isWinner: true,
+                    // User details - team member
+                    userId: member.userId._id,
+                    participantName: member.userId.name,
+                    participantEmail: member.userId.email,
+                    participantMobile: member.userId.phoneNumber,
+                    collegeName: team.registeredBy?.college || "Unknown", // Use registeredBy's college
+                    // Additional details from EventRegistration
+                    department: memberReg?.department || "Unknown",
+                    level: memberReg?.level || "Unknown",
+                    year: memberReg?.year || "Unknown",
+                    // Team details
+                    teamName: winner.teamName || team.teamName,
+                  });
+                } else {
+                  // Direct participant (non-registered user) - get details from team member data
+                  const memberReg = regMap.get(member.name);
+                  allWinners.push({
+                    eventId: event._id,
+                    eventName: event.name,
+                    eventType: "group",
+                    clubInCharge: event.clubInCharge,
+                    winnerRank: winner.rank || null,
+                    isWinner: true,
+                    // User details - direct participant
+                    userId: null,
+                    participantName: member.name,
+                    participantEmail: member.email,
+                    participantMobile: member.mobile,
+                    collegeName: team.registeredBy?.college || "Unknown", // Use registeredBy's college
+                    // Additional details from team member data or EventRegistration
+                    department: memberReg?.department || member.dept || "Unknown",
+                    level: memberReg?.level || "Unknown",
+                    year: memberReg?.year || member.year || "Unknown",
+                    // Team details
+                    teamName: winner.teamName || team.teamName,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    console.log(`Processed ${allWinners.length} total winners across all events`);
+    
+    // Sort winners by event name and then by rank
+    allWinners.sort((a, b) => {
+      if (a.eventName !== b.eventName) {
+        return a.eventName.localeCompare(b.eventName);
+      }
+      return (a.winnerRank || 999) - (b.winnerRank || 999);
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        winners: allWinners,
+        totalWinners: allWinners.length,
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching winners data:", error);
+    return next(new ErrorHandler("Failed to fetch winners data", 500));
+  }
+});
+
 // Get detailed events with registrations (Super Admin only)
 const getEventsWithRegistrations = catchAsyncError(async (req, res, next) => {
   // Aggregate events with their applications, teams, and related user data
@@ -3902,6 +4165,7 @@ module.exports = {
   getAdminsByClub,
   getAllAdmins,
   getAllEventRegistrations,
+  getWinnersData,
   getEventsWithRegistrations,
   getEventWithRegistrations,
   getEventWithRegistrationsV2,
