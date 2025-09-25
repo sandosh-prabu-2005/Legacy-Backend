@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Event = require("../models/events");
 const Teams = require("../models/teams");
 const User = require("../models/users");
@@ -750,22 +751,40 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     }
 
     // Check if the current user is the one who registered this team
-    if (team.registrantId.toString() !== userId.toString()) {
+    if (team.registeredBy.toString() !== userId.toString()) {
       return next(
         new ErrorHandler("You can only edit teams you registered", 403)
       );
     }
 
-    // Find the member in the team
-    const member = team.members.find((m) => m._id.toString() === memberId);
+    // Debug: Log team members and the memberId we're looking for
+    console.log("[DEBUG] Looking for member by EventRegistration ID:", memberId);
+    console.log("[DEBUG] Team members:", team.members.map(m => ({
+      id: m._id ? m._id.toString() : 'no _id',
+      name: m.name
+    })));
+
+    // First, find the EventRegistration to get the participant name
+    const eventRegistration = await EventRegistration.findById(memberId);
+    if (!eventRegistration) {
+      return next(new ErrorHandler("Registration record not found", 404));
+    }
+
+    // Find the member in the team by participant name
+    const member = team.members.find((m) => m.name === eventRegistration.participantName);
     if (!member) {
+      console.log("[DEBUG] Member not found by name. Looking for:", eventRegistration.participantName);
+      console.log("[DEBUG] Available members:", team.members.map(m => m.name));
       return next(new ErrorHandler("Member not found in team", 404));
     }
 
-    // Update the member details
-    member.participantName = participantName || member.participantName;
-    member.participantEmail = participantEmail || member.participantEmail;
-    member.department = department || member.department;
+    // Store the original participant name before updating
+    const originalParticipantName = member.name;
+
+    // Update the member details (using correct field names from schema)
+    member.name = participantName || member.name;
+    member.email = participantEmail || member.email;
+    member.dept = department || member.dept;
     member.degree = degree || member.degree;
     member.year = year || member.year;
     member.level = level || member.level;
@@ -774,6 +793,18 @@ exports.updateTeamRegistrationMember = catchAsyncError(
 
     await team.save();
 
+    // Update the EventRegistration record (we already have it)
+    eventRegistration.participantName = participantName || eventRegistration.participantName;
+    eventRegistration.participantEmail = participantEmail || eventRegistration.participantEmail;
+    eventRegistration.participantMobile = mobile || eventRegistration.participantMobile;
+    eventRegistration.department = department || eventRegistration.department;
+    eventRegistration.degree = degree || eventRegistration.degree;
+    eventRegistration.year = year || eventRegistration.year;
+    eventRegistration.level = level || eventRegistration.level;
+    eventRegistration.gender = gender || eventRegistration.gender;
+
+    await eventRegistration.save();
+
     res.status(200).json({
       success: true,
       message: "Team member details updated successfully",
@@ -781,6 +812,305 @@ exports.updateTeamRegistrationMember = catchAsyncError(
     });
   }
 );
+
+// Remove team member (for teams created via direct registration)
+exports.removeTeamRegistrationMember = catchAsyncError(
+  async (req, res, next) => {
+    const { teamId, memberId } = req.params;
+    const userId = req.user._id;
+
+    console.log("[DEBUG] Remove member request:", {
+      teamId,
+      memberId,
+      userId: userId.toString(),
+    });
+
+    // Find the team
+    const team = await Teams.findById(teamId);
+    if (!team) {
+      return next(new ErrorHandler("Team not found", 404));
+    }
+
+    // Check if the current user is the one who registered this team
+    if (team.registeredBy.toString() !== userId.toString()) {
+      return next(
+        new ErrorHandler("You can only edit teams you registered", 403)
+      );
+    }
+
+    // First, find the EventRegistration to get the participant name
+    const eventRegistration = await EventRegistration.findById(memberId);
+    if (!eventRegistration) {
+      return next(new ErrorHandler("Registration record not found", 404));
+    }
+
+    // Find the member in the team by participant name
+    const memberIndex = team.members.findIndex((m) => m.name === eventRegistration.participantName);
+    if (memberIndex === -1) {
+      return next(new ErrorHandler("Member not found in team", 404));
+    }
+
+    // Check if this is the last member (teams must have at least 1 member)
+    if (team.members.length <= 1) {
+      return next(
+        new ErrorHandler("Cannot remove the last member of a team", 400)
+      );
+    }
+
+    // Get the member data before removing
+    const memberToRemove = team.members[memberIndex];
+    const memberName = memberToRemove.name;
+
+    // Remove the member from the team
+    team.members.splice(memberIndex, 1);
+    await team.save();
+
+    // Delete the EventRegistration record
+    await EventRegistration.findByIdAndDelete(memberId);
+
+    console.log("[DEBUG] Removed member successfully:", {
+      teamId: teamId.toString(),
+      memberName,
+      remainingMembers: team.members.length,
+      deletedRegistrationId: memberId,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `${memberName} has been removed from the team successfully`,
+      data: {
+        team: {
+          _id: team._id,
+          teamName: team.teamName,
+          memberCount: team.members.length,
+        },
+      },
+    });
+  }
+);
+
+// Update entire team registration (for teams created via direct registration)
+exports.updateTeamRegistration = catchAsyncError(async (req, res, next) => {
+  const { teamId } = req.params;
+  const userId = req.user._id;
+  const { teamName, members } = req.body;
+
+  console.log("[DEBUG] Update team request:", {
+    teamId,
+    teamName,
+    membersCount: members?.length,
+    userId: userId.toString(),
+  });
+
+  // Validate required fields
+  if (!teamName || !members || !Array.isArray(members) || members.length === 0) {
+    return next(new ErrorHandler("Team name and members are required", 400));
+  }
+
+  // Find the team
+  const team = await Teams.findById(teamId);
+  if (!team) {
+    return next(new ErrorHandler("Team not found", 404));
+  }
+
+  // Check if the current user is the one who registered this team
+  if (team.registeredBy.toString() !== userId.toString()) {
+    return next(
+      new ErrorHandler("You can only edit teams you registered", 403)
+    );
+  }
+
+  // Get event details for validation
+  const event = await Event.findById(team.eventId);
+  if (!event) {
+    return next(new ErrorHandler("Event not found", 404));
+  }
+
+  // Validate member count against event requirements
+  if (members.length < event.minTeamSize) {
+    return next(
+      new ErrorHandler(
+        `Minimum ${event.minTeamSize} participants required for this event`,
+        400
+      )
+    );
+  }
+  if (members.length > event.maxTeamSize) {
+    return next(
+      new ErrorHandler(
+        `Maximum ${event.maxTeamSize} participants allowed for this event`,
+        400
+      )
+    );
+  }
+
+  // Validate each member
+  for (let i = 0; i < members.length; i++) {
+    const member = members[i];
+    if (!member.participantName?.trim()) {
+      return next(
+        new ErrorHandler(`Member ${i + 1}: Name is required`, 400)
+      );
+    }
+    if (!member.level) {
+      return next(
+        new ErrorHandler(`Member ${i + 1}: Level is required`, 400)
+      );
+    }
+    if (!member.degree) {
+      return next(
+        new ErrorHandler(`Member ${i + 1}: Degree is required`, 400)
+      );
+    }
+    if (!member.department) {
+      return next(
+        new ErrorHandler(`Member ${i + 1}: Department is required`, 400)
+      );
+    }
+    if (!member.year) {
+      return next(
+        new ErrorHandler(`Member ${i + 1}: Year is required`, 400)
+      );
+    }
+    if (!member.gender) {
+      return next(
+        new ErrorHandler(`Member ${i + 1}: Gender is required`, 400)
+      );
+    }
+  }
+
+  // Check for gender conflicts (for team events with multiple members)
+  if (members.length > 1) {
+    const genders = members.map((m) => m.gender).filter((g) => g);
+    const uniqueGenders = [...new Set(genders)];
+    if (uniqueGenders.length > 1) {
+      return next(
+        new ErrorHandler(
+          "All team members must be of the same gender",
+          400
+        )
+      );
+    }
+  }
+
+  try {
+    // Prepare new members data
+    const newMembers = members.map((member) => ({
+      userId: null, // For direct participants
+      name: member.participantName,
+      email: member.participantEmail || null,
+      mobile: member.participantMobile || null,
+      dept: member.department,
+      year: member.year,
+      degree: member.degree,
+      level: member.level,
+      gender: member.gender,
+      registrationType: "direct",
+      joinedAt: new Date(),
+    }));
+
+    // Update the team using findByIdAndUpdate to avoid ObjectId issues
+    const updatedTeam = await Teams.findByIdAndUpdate(
+      teamId,
+      {
+        $set: {
+          teamName: teamName.trim(),
+          members: newMembers,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+
+    // Update corresponding EventRegistration records
+    // First, find all existing registrations for this team
+    const existingRegistrations = await EventRegistration.find({ teamId });
+    
+    // Delete existing registrations for this team
+    await EventRegistration.deleteMany({ teamId });
+
+    // Get registrant details for inherited information
+    const registrant = await User.findById(userId);
+    if (!registrant) {
+      return next(new ErrorHandler("Registrant not found", 404));
+    }
+
+    // Create new registration records for updated members
+    const registrationPromises = members.map((member) => {
+      return EventRegistration.create({
+        // Event Information
+        eventId: updatedTeam.eventId,
+        eventName: event.name,
+        eventType: event.event_type,
+
+        // Team Information
+        teamId,
+        teamName: teamName.trim(),
+
+        // Registrant Information
+        registrantId: userId,
+        registrantEmail: registrant.email,
+
+        // Participant Information
+        participantName: member.participantName,
+        participantEmail: member.participantEmail || null,
+        participantMobile: member.participantMobile || null,
+
+        // Educational Information
+        level: member.level,
+        degree: member.degree,
+        department: member.department,
+        year: member.year,
+
+        // Demographic Information
+        gender: member.gender,
+
+        // College Information (inherited from registrant)
+        collegeName: registrant.college,
+        collegeCity: registrant.city,
+        collegeState: registrant.state || "Not Specified",
+
+        // Registration Metadata
+        registrationType: "direct",
+      });
+    });
+
+    const newRegistrations = await Promise.all(registrationPromises);
+
+    console.log("[DEBUG] Updated team successfully:", {
+      teamId: teamId.toString(),
+      teamName: teamName.trim(),
+      memberCount: members.length,
+      registrationCount: newRegistrations.length,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Team "${teamName}" updated successfully with ${members.length} member${members.length > 1 ? 's' : ''}`,
+      data: {
+        team: {
+          _id: updatedTeam._id,
+          teamName: updatedTeam.teamName,
+          eventName: event.name,
+          memberCount: updatedTeam.members.length,
+          members: updatedTeam.members.map((member) => ({
+            _id: member._id,
+            name: member.name,
+            level: member.level,
+            degree: member.degree,
+            department: member.dept,
+            year: member.year,
+            gender: member.gender,
+          })),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("[ERROR] Failed to update team:", error);
+    return next(
+      new ErrorHandler("Failed to update team. Please try again.", 500)
+    );
+  }
+});
 
 // Get events available for college editing (all events the college has registrations for + available events)
 exports.getCollegeEventsForEdit = catchAsyncError(async (req, res, next) => {
