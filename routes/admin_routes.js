@@ -38,6 +38,7 @@ const {
   getCollegeRegistrationStats,
   getEventParticipants,
   updateAttendance,
+  adminDeleteTeam,
   // changeAdminPassword,
 } = require("../controllers/adminController");
 const {
@@ -173,6 +174,11 @@ router
 router
   .route("/admin/users/all-admins")
   .get(isAuthenticatedUser, authorizeRoles("admin"), getAllAdmins);
+
+// Team management routes (Admin only)
+router
+  .route("/admin/teams/:teamId/delete")
+  .delete(isAuthenticatedUser, authorizeRoles("admin"), adminDeleteTeam);
 
 // Admin invite routes (Super Admin only)
 router

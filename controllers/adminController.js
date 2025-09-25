@@ -2,7 +2,10 @@ const catchAsyncError = require("../middlewares/catchAsyncError");
 const ErrorHandler = require("../utils/errorHandler");
 const mongoose = require("mongoose");
 
-console.log("=== AdminController loaded with NEW updateEventWinners function ===", new Date().toISOString());
+console.log(
+  "=== AdminController loaded with NEW updateEventWinners function ===",
+  new Date().toISOString()
+);
 
 const EventModel = require("../models/events");
 const UserModel = require("../models/users");
@@ -804,7 +807,7 @@ const getDashboardStats = catchAsyncError(async (req, res, next) => {
 
   // Super Admin: Get statistics using EventRegistrations collection (like college registrations page)
   // Use the already imported EventRegistration model
-  
+
   // Get all registrations from EventRegistrations collection
   const allRegistrations = await EventRegistration.find({}).lean();
 
@@ -1000,33 +1003,41 @@ const getAllAdmins = catchAsyncError(async (req, res, next) => {
 const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
   try {
     console.log("=== getAllEventRegistrations called ===");
-    
+
     // Set request timeout for 30 seconds
     req.setTimeout(30000);
-    
+
     // First, get all registrations without populate
     const registrations = await EventRegistration.find({})
       .lean()
       .sort({ createdAt: -1 });
 
-    console.log(`Found ${registrations.length} registrations in EventRegistrations collection`);
-    
+    console.log(
+      `Found ${registrations.length} registrations in EventRegistrations collection`
+    );
+
     if (registrations.length === 0) {
       return res.status(200).json({
         success: true,
         data: {
           registrations: [],
           totalRegistrations: 0,
-        }
+        },
       });
     }
 
     // Get unique event and user IDs for bulk queries
-    const eventIds = [...new Set(registrations.map(r => r.eventId).filter(Boolean))];
-    const userIds = [...new Set(registrations.map(r => r.registrantId).filter(Boolean))];
-    
-    console.log(`Bulk fetching ${eventIds.length} events and ${userIds.length} users`);
-    
+    const eventIds = [
+      ...new Set(registrations.map((r) => r.eventId).filter(Boolean)),
+    ];
+    const userIds = [
+      ...new Set(registrations.map((r) => r.registrantId).filter(Boolean)),
+    ];
+
+    console.log(
+      `Bulk fetching ${eventIds.length} events and ${userIds.length} users`
+    );
+
     // Bulk fetch events and users
     const [events, users] = await Promise.all([
       EventModel.find({ _id: { $in: eventIds } })
@@ -1034,25 +1045,30 @@ const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
         .lean(),
       UserModel.find({ _id: { $in: userIds } })
         .select("name email college phoneNumber")
-        .lean()
+        .lean(),
     ]);
-    
+
     console.log(`Fetched ${events.length} events and ${users.length} users`);
-    
+
     // Create lookup maps for O(1) access
-    const eventMap = new Map(events.map(e => [e._id.toString(), e]));
-    const userMap = new Map(users.map(u => [u._id.toString(), u]));
-    
+    const eventMap = new Map(events.map((e) => [e._id.toString(), e]));
+    const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
     // Populate registrations efficiently
-    const registrationsWithEventData = registrations.map(reg => ({
+    const registrationsWithEventData = registrations.map((reg) => ({
       ...reg,
       eventId: reg.eventId ? eventMap.get(reg.eventId.toString()) : null,
-      registrantId: reg.registrantId ? userMap.get(reg.registrantId.toString()) : null
+      registrantId: reg.registrantId
+        ? userMap.get(reg.registrantId.toString())
+        : null,
     }));
-    
+
     // Log sample for debugging
     if (registrationsWithEventData.length > 0) {
-      console.log("Sample registration:", JSON.stringify(registrationsWithEventData[0], null, 2));
+      console.log(
+        "Sample registration:",
+        JSON.stringify(registrationsWithEventData[0], null, 2)
+      );
     }
 
     res.status(200).json({
@@ -1060,9 +1076,8 @@ const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
       data: {
         registrations: registrationsWithEventData,
         totalRegistrations: registrationsWithEventData.length,
-      }
+      },
     });
-
   } catch (error) {
     console.error("Error fetching all event registrations:", error);
     return next(new ErrorHandler("Failed to fetch event registrations", 500));
@@ -1073,10 +1088,10 @@ const getAllEventRegistrations = catchAsyncError(async (req, res, next) => {
 const getWinnersData = catchAsyncError(async (req, res, next) => {
   try {
     console.log("=== getWinnersData called ===");
-    
+
     // Set request timeout for 30 seconds
     req.setTimeout(30000);
-    
+
     // Fetch all events with their applications and winners arrays
     const events = await EventModel.find({})
       .select("name event_id event_type clubInCharge applications winners")
@@ -1084,20 +1099,23 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
       .sort({ createdAt: -1 });
 
     console.log(`Found ${events.length} events to process for winners`);
-    
+
     const allWinners = [];
-    
+
     for (const event of events) {
       if (event.event_type === "solo") {
         // For solo events, get winners from event.winners array
         // In solo events, userId in winners array refers to EventRegistration._id, not User._id
         const soloWinners = event.winners || [];
-        
+
         for (const winner of soloWinners) {
           try {
             // For solo events, userId in winners array is the eventRegistration _id
-            const eventRegistration = await mongoose.model('EventRegistration').findById(winner.userId).lean();
-            
+            const eventRegistration = await mongoose
+              .model("EventRegistration")
+              .findById(winner.userId)
+              .lean();
+
             if (eventRegistration) {
               allWinners.push({
                 eventId: event._id,
@@ -1109,7 +1127,8 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
                 // User details from EventRegistration
                 userId: winner.userId, // This is EventRegistration._id
                 participantName: eventRegistration.participantName || "Unknown",
-                participantEmail: eventRegistration.participantEmail || "Unknown",
+                participantEmail:
+                  eventRegistration.participantEmail || "Unknown",
                 participantMobile: eventRegistration.participantMobile || null,
                 collegeName: eventRegistration.collegeName || "Unknown",
                 department: eventRegistration.department || "Unknown",
@@ -1121,27 +1140,33 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
                 teamName: null,
               });
             } else {
-              console.warn(`EventRegistration not found for winner userId: ${winner.userId}`);
+              console.warn(
+                `EventRegistration not found for winner userId: ${winner.userId}`
+              );
             }
           } catch (err) {
-            console.error(`Error fetching solo winner details for ${winner.userId}:`, err);
+            console.error(
+              `Error fetching solo winner details for ${winner.userId}:`,
+              err
+            );
           }
         }
-        
+
         // Also check applications array for legacy winner data
-        const legacyWinners = event.applications?.filter(app => 
-          app.isWinner === true || app.winnerRank != null
-        ) || [];
-        
+        const legacyWinners =
+          event.applications?.filter(
+            (app) => app.isWinner === true || app.winnerRank != null
+          ) || [];
+
         // Get user details for legacy winners
-        const userIds = legacyWinners.map(w => w.userId).filter(Boolean);
+        const userIds = legacyWinners.map((w) => w.userId).filter(Boolean);
         if (userIds.length > 0) {
           const users = await UserModel.find({ _id: { $in: userIds } })
             .select("name email college phoneNumber")
             .lean();
-          
-          const userMap = new Map(users.map(u => [u._id.toString(), u]));
-          
+
+          const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
           // Process legacy winners from applications
           for (const winner of legacyWinners) {
             const user = userMap.get(winner.userId?.toString());
@@ -1161,7 +1186,7 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
                 collegeName: user.college,
                 // Additional details - not available in User model, will be "Unknown"
                 department: "Unknown",
-                level: "Unknown", 
+                level: "Unknown",
                 year: "Unknown",
                 // Team details - null for solo events
                 teamName: null,
@@ -1172,41 +1197,52 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
       } else if (event.event_type === "group") {
         // For group events, get winners from winners array
         const groupWinners = event.winners || [];
-        
+
         for (const winner of groupWinners) {
           // For each team winner, we need to get the team members
           const teamId = winner.teamId;
           if (teamId) {
             // Find the team
-            const team = await mongoose.model('Teams').findById(teamId)
-              .populate('leader', 'name email college phoneNumber')
-              .populate('members.userId', 'name email college phoneNumber')
-              .populate('registeredBy', 'college') // Populate registeredBy to get college info
+            const team = await mongoose
+              .model("Teams")
+              .findById(teamId)
+              .populate("leader", "name email college phoneNumber")
+              .populate("members.userId", "name email college phoneNumber")
+              .populate("registeredBy", "college") // Populate registeredBy to get college info
               .lean();
-            
+
             if (team) {
               // For group events, only include team members (leader + members), not the registrant
               // Collect all user IDs from team members only
               const memberUserIds = [];
-              team.members.forEach(member => {
+              team.members.forEach((member) => {
                 if (member.userId?._id) memberUserIds.push(member.userId._id);
               });
-              
+
               // Fetch EventRegistrations for team members to get dept, level, year
               // Note: We look for participantName match since team members might not be registrants
               let eventRegistrations = [];
               if (memberUserIds.length > 0) {
-                eventRegistrations = await mongoose.model('EventRegistration').find({
-                  eventId: event._id,
-                  $or: [
-                    { registrantId: { $in: memberUserIds } },
-                    { participantName: { $in: team.members.map(m => m.userId?.name || m.name).filter(Boolean) } }
-                  ]
-                }).lean();
+                eventRegistrations = await mongoose
+                  .model("EventRegistration")
+                  .find({
+                    eventId: event._id,
+                    $or: [
+                      { registrantId: { $in: memberUserIds } },
+                      {
+                        participantName: {
+                          $in: team.members
+                            .map((m) => m.userId?.name || m.name)
+                            .filter(Boolean),
+                        },
+                      },
+                    ],
+                  })
+                  .lean();
               }
-              
+
               const regMap = new Map();
-              eventRegistrations.forEach(reg => {
+              eventRegistrations.forEach((reg) => {
                 // Map by registrantId for registered users
                 if (reg.registrantId) {
                   regMap.set(reg.registrantId.toString(), reg);
@@ -1216,16 +1252,20 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
                   regMap.set(reg.participantName, reg);
                 }
               });
-              
+
               // Add team leader as winner (only if leader is also a team member)
               if (team.leader) {
                 // Check if leader is in the members array (not just the registrant)
-                const isLeaderAMember = team.members.some(member => 
-                  member.userId?._id?.toString() === team.leader._id.toString()
+                const isLeaderAMember = team.members.some(
+                  (member) =>
+                    member.userId?._id?.toString() ===
+                    team.leader._id.toString()
                 );
-                
+
                 if (isLeaderAMember) {
-                  const leaderReg = regMap.get(team.leader._id.toString()) || regMap.get(team.leader.name);
+                  const leaderReg =
+                    regMap.get(team.leader._id.toString()) ||
+                    regMap.get(team.leader.name);
                   allWinners.push({
                     eventId: event._id,
                     eventName: event.name,
@@ -1248,15 +1288,19 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
                   });
                 }
               }
-              
+
               // Add team members as winners (excluding leader if already added)
               for (const member of team.members) {
                 // Skip if this member is the leader (already added above)
-                const isLeader = team.leader && member.userId?._id?.toString() === team.leader._id.toString();
+                const isLeader =
+                  team.leader &&
+                  member.userId?._id?.toString() === team.leader._id.toString();
                 if (isLeader) continue;
-                
+
                 if (member.userId) {
-                  const memberReg = regMap.get(member.userId._id.toString()) || regMap.get(member.userId.name);
+                  const memberReg =
+                    regMap.get(member.userId._id.toString()) ||
+                    regMap.get(member.userId.name);
                   allWinners.push({
                     eventId: event._id,
                     eventName: event.name,
@@ -1294,7 +1338,8 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
                     participantMobile: member.mobile,
                     collegeName: team.registeredBy?.college || "Unknown", // Use registeredBy's college
                     // Additional details from team member data or EventRegistration
-                    department: memberReg?.department || member.dept || "Unknown",
+                    department:
+                      memberReg?.department || member.dept || "Unknown",
                     level: memberReg?.level || "Unknown",
                     year: memberReg?.year || member.year || "Unknown",
                     // Team details
@@ -1307,9 +1352,11 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
         }
       }
     }
-    
-    console.log(`Processed ${allWinners.length} total winners across all events`);
-    
+
+    console.log(
+      `Processed ${allWinners.length} total winners across all events`
+    );
+
     // Sort winners by event name and then by rank
     allWinners.sort((a, b) => {
       if (a.eventName !== b.eventName) {
@@ -1323,9 +1370,8 @@ const getWinnersData = catchAsyncError(async (req, res, next) => {
       data: {
         winners: allWinners,
         totalWinners: allWinners.length,
-      }
+      },
     });
-
   } catch (error) {
     console.error("Error fetching winners data:", error);
     return next(new ErrorHandler("Failed to fetch winners data", 500));
@@ -2219,36 +2265,44 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
 
   // Format winners - handle both direct winners array and isWinner flags in registrations
   let formattedWinners = [];
-  
-  if (event.winners && Array.isArray(event.winners) && event.winners.length > 0) {
+
+  if (
+    event.winners &&
+    Array.isArray(event.winners) &&
+    event.winners.length > 0
+  ) {
     // Use direct winners array from event document (preferred for new format)
     if (event.event_type === "group") {
       // For group events, we need to send individual member records for each winner team
       // so that the frontend can process them correctly
       const TeamModel = require("../models/teams");
-      
+
       const allWinnerMembers = [];
-      
+
       for (const winner of event.winners) {
         try {
           const team = await TeamModel.findById(winner.teamId).lean();
-          
+
           console.log(`DEBUG: Fetching winner team ${winner.teamId}:`, {
             teamFound: !!team,
             teamName: team?.teamName || team?.name,
             leaderObjectId: team?.leader?.toString(),
-            membersCount: team?.members?.length || 0
+            membersCount: team?.members?.length || 0,
           });
-          
+
           if (team) {
             // Get all team members (including leader)
             const allMembers = [];
-            
+
             // First, add all team members from the members array (they have direct information)
             if (team.members && Array.isArray(team.members)) {
-              team.members.forEach(member => {
+              team.members.forEach((member) => {
                 allMembers.push({
-                  _id: member._id || `direct-${member.name}-${Math.random().toString(36).slice(2, 8)}`,
+                  _id:
+                    member._id ||
+                    `direct-${member.name}-${Math.random()
+                      .toString(36)
+                      .slice(2, 8)}`,
                   name: member.name || "Unknown",
                   email: member.email || "Unknown",
                   dept: member.dept || "Unknown",
@@ -2257,34 +2311,40 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
                   degree: member.degree || "Unknown",
                   gender: member.gender || "Unknown",
                   mobile: member.mobile || "Unknown",
-                  role: "Member"
+                  role: "Member",
                 });
               });
             }
-            
+
             // Handle leader - try to get leader info from User collection
             if (team.leader) {
               try {
                 const leaderUser = await UserModel.findById(team.leader)
-                  .select('name email dept year college')
+                  .select("name email dept year college")
                   .lean();
-                
+
                 if (leaderUser) {
                   // Check if this leader is already in our members array (by email match)
-                  const existingMemberIndex = allMembers.findIndex(member => 
-                    member.email && leaderUser.email && 
-                    member.email.toLowerCase().trim() === leaderUser.email.toLowerCase().trim()
+                  const existingMemberIndex = allMembers.findIndex(
+                    (member) =>
+                      member.email &&
+                      leaderUser.email &&
+                      member.email.toLowerCase().trim() ===
+                        leaderUser.email.toLowerCase().trim()
                   );
-                  
+
                   if (existingMemberIndex !== -1) {
                     // Leader found in members array, update their info and role
                     allMembers[existingMemberIndex] = {
                       ...allMembers[existingMemberIndex],
-                      name: leaderUser.name || allMembers[existingMemberIndex].name,
+                      name:
+                        leaderUser.name || allMembers[existingMemberIndex].name,
                       college: leaderUser.college || "Unknown",
-                      role: "Leader"
+                      role: "Leader",
                     };
-                    console.log(`DEBUG: Leader ${leaderUser.name} found in members array, updated role`);
+                    console.log(
+                      `DEBUG: Leader ${leaderUser.name} found in members array, updated role`
+                    );
                   } else {
                     // Leader not in members array, add them separately
                     allMembers.push({
@@ -2294,19 +2354,26 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
                       dept: leaderUser.dept || "Unknown",
                       year: leaderUser.year || "Unknown",
                       college: leaderUser.college || "Unknown",
-                      role: "Leader"
+                      role: "Leader",
                     });
-                    console.log(`DEBUG: Leader ${leaderUser.name} added separately`);
+                    console.log(
+                      `DEBUG: Leader ${leaderUser.name} added separately`
+                    );
                   }
                 } else {
                   // Leader not found in User collection
                   if (allMembers.length > 0) {
                     allMembers[0].role = "Leader";
-                    console.log(`DEBUG: Made first member ${allMembers[0].name} the leader`);
+                    console.log(
+                      `DEBUG: Made first member ${allMembers[0].name} the leader`
+                    );
                   }
                 }
               } catch (err) {
-                console.log(`DEBUG: Error fetching leader ${team.leader}:`, err.message);
+                console.log(
+                  `DEBUG: Error fetching leader ${team.leader}:`,
+                  err.message
+                );
                 if (allMembers.length > 0) {
                   allMembers[0].role = "Leader";
                 }
@@ -2314,13 +2381,16 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
             } else if (allMembers.length > 0) {
               allMembers[0].role = "Leader";
             }
-            
-            console.log(`DEBUG: Final allMembers for team ${winner.teamId}:`, allMembers.map(m => ({
-              name: m.name,
-              email: m.email,
-              role: m.role
-            })));
-            
+
+            console.log(
+              `DEBUG: Final allMembers for team ${winner.teamId}:`,
+              allMembers.map((m) => ({
+                name: m.name,
+                email: m.email,
+                role: m.role,
+              }))
+            );
+
             // Create individual winner member records that frontend expects
             // Frontend groups by teamId, so we create separate records for each member
             allMembers.forEach((member, index) => {
@@ -2329,30 +2399,30 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
                 _id: member._id,
                 userId: member._id,
                 teamId: winner.teamId,
-                teamName: winner.teamName || team.teamName || team.name || "Team",
-                name: member.name,        // Frontend resolveName() looks for .name
-                userName: member.name,    // Frontend resolveName() looks for .userName
+                teamName:
+                  winner.teamName || team.teamName || team.name || "Team",
+                name: member.name, // Frontend resolveName() looks for .name
+                userName: member.name, // Frontend resolveName() looks for .userName
                 email: member.email,
-                userEmail: member.email,  // Frontend resolveEmail() looks for .userEmail
+                userEmail: member.email, // Frontend resolveEmail() looks for .userEmail
                 dept: member.dept,
-                userDept: member.dept,    // Frontend resolveDept() looks for .userDept
+                userDept: member.dept, // Frontend resolveDept() looks for .userDept
                 year: member.year,
-                userYear: member.year,    // Frontend resolveYear() looks for .userYear
+                userYear: member.year, // Frontend resolveYear() looks for .userYear
                 college: member.college,
                 userCollege: member.college, // Frontend resolveCollege() looks for .userCollege
                 gender: member.gender,
-                userGender: member.gender,   // Frontend resolveGender() looks for .userGender
+                userGender: member.gender, // Frontend resolveGender() looks for .userGender
                 mobile: member.mobile,
-                userMobile: member.mobile,   // Frontend resolveMobile() looks for .userMobile
+                userMobile: member.mobile, // Frontend resolveMobile() looks for .userMobile
                 role: member.role,
                 rank: winner.rank,
                 winnerRank: winner.rank,
                 isWinner: true,
                 // Add index to maintain member order in frontend
-                memberIndex: index
+                memberIndex: index,
               });
             });
-            
           } else {
             // Team not found, create placeholder winner record
             allWinnerMembers.push({
@@ -2370,17 +2440,20 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
               userCollege: "Unknown",
               rank: winner.rank,
               winnerRank: winner.rank,
-              isWinner: true
+              isWinner: true,
             });
           }
         } catch (err) {
-          console.error(`Error fetching team details for winner ${winner.teamId}:`, err);
+          console.error(
+            `Error fetching team details for winner ${winner.teamId}:`,
+            err
+          );
           // Create error placeholder
           allWinnerMembers.push({
             teamId: winner.teamId,
             teamName: winner.teamName || "Team",
             name: "Error loading team",
-            userName: "Error loading team", 
+            userName: "Error loading team",
             email: "Unknown",
             userEmail: "Unknown",
             dept: "Unknown",
@@ -2391,13 +2464,12 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
             userCollege: "Unknown",
             rank: winner.rank,
             winnerRank: winner.rank,
-            isWinner: true
+            isWinner: true,
           });
         }
       }
-      
+
       formattedWinners = allWinnerMembers;
-      
     } else {
       // For solo events, populate participant details from eventregistrations collection
       // The userId in winners array refers to _id in eventregistrations collection
@@ -2405,8 +2477,10 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
         event.winners.map(async (winner) => {
           try {
             // For solo events, userId in winners array is the eventRegistration _id
-            const eventRegistration = await EventRegistration.findById(winner.userId).lean();
-            
+            const eventRegistration = await EventRegistration.findById(
+              winner.userId
+            ).lean();
+
             if (eventRegistration) {
               return {
                 rank: winner.rank,
@@ -2428,17 +2502,20 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
                 degree: eventRegistration.degree || "Unknown",
                 collegeName: eventRegistration.collegeName || "Unknown",
                 participantName: eventRegistration.participantName || "Unknown",
-                participantEmail: eventRegistration.participantEmail || "Unknown",
+                participantEmail:
+                  eventRegistration.participantEmail || "Unknown",
                 isPresent: eventRegistration.isPresent || false,
                 winnerRank: winner.rank,
               };
             } else {
-              console.warn(`EventRegistration not found for winner userId: ${winner.userId}`);
+              console.warn(
+                `EventRegistration not found for winner userId: ${winner.userId}`
+              );
               return {
                 rank: winner.rank,
                 userId: winner.userId,
                 name: "Unknown",
-                userName: "Unknown", 
+                userName: "Unknown",
                 email: "Unknown",
                 userEmail: "Unknown",
                 dept: "Unknown",
@@ -2455,13 +2532,16 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
               };
             }
           } catch (err) {
-            console.error(`Error fetching eventRegistration details for winner ${winner.userId}:`, err);
+            console.error(
+              `Error fetching eventRegistration details for winner ${winner.userId}:`,
+              err
+            );
             return {
               rank: winner.rank,
               userId: winner.userId,
               name: "Unknown",
               userName: "Unknown",
-              email: "Unknown", 
+              email: "Unknown",
               userEmail: "Unknown",
               dept: "Unknown",
               userDept: "Unknown",
@@ -2479,9 +2559,11 @@ const getEventWithRegistrationsV2 = catchAsyncError(async (req, res, next) => {
         })
       );
     }
-    
+
     // Sort winners by rank
-    formattedWinners.sort((a, b) => (a.rank || Infinity) - (b.rank || Infinity));
+    formattedWinners.sort(
+      (a, b) => (a.rank || Infinity) - (b.rank || Infinity)
+    );
   } else {
     // Fallback to old method - check isWinner flags in registrations
     formattedWinners = formattedRegistrations
@@ -3457,9 +3539,9 @@ const updateEventWinners = catchAsyncError(async (req, res, next) => {
 
   console.log("Found event:", {
     _id: event._id,
-    event_id: event.event_id, 
+    event_id: event.event_id,
     name: event.name,
-    currentWinners: event.winners || "No winners field yet"
+    currentWinners: event.winners || "No winners field yet",
   });
 
   // Prepare winners array - store team IDs for group events, user IDs for solo events
@@ -3485,16 +3567,19 @@ const updateEventWinners = catchAsyncError(async (req, res, next) => {
   // Sort winners by rank
   winnersArray.sort((a, b) => (a.rank || Infinity) - (b.rank || Infinity));
 
-  console.log("Final winnersArray to be saved:", JSON.stringify(winnersArray, null, 2));
+  console.log(
+    "Final winnersArray to be saved:",
+    JSON.stringify(winnersArray, null, 2)
+  );
 
   // Update the event with the new winners array field
   const updateResult = await EventModel.updateOne(
     { event_id: eventId },
-    { 
-      $set: { 
+    {
+      $set: {
         winners: winnersArray,
-        winnersUpdatedAt: new Date()
-      } 
+        winnersUpdatedAt: new Date(),
+      },
     }
   );
 
@@ -3506,46 +3591,50 @@ const updateEventWinners = catchAsyncError(async (req, res, next) => {
     _id: updatedEvent._id,
     event_id: updatedEvent.event_id,
     winners: updatedEvent.winners,
-    winnersUpdatedAt: updatedEvent.winnersUpdatedAt
+    winnersUpdatedAt: updatedEvent.winnersUpdatedAt,
   });
 
   // Since applications array is empty, we need to update the teams collection for winners
   // For teams, mark the teams as winners in the teams collection
   for (const winnerEntry of winnersArray) {
     if (winnerEntry.teamId) {
-      console.log(`Updating team ${winnerEntry.teamId} as winner with rank ${winnerEntry.rank}`);
+      console.log(
+        `Updating team ${winnerEntry.teamId} as winner with rank ${winnerEntry.rank}`
+      );
       await TeamModel.updateMany(
-        { 
+        {
           eventId: event._id,
           $or: [
             { _id: new mongoose.Types.ObjectId(winnerEntry.teamId) },
-            { teamId: winnerEntry.teamId }
-          ]
+            { teamId: winnerEntry.teamId },
+          ],
         },
-        { 
-          $set: { 
-            isWinner: true, 
-            winnerRank: winnerEntry.rank 
-          } 
+        {
+          $set: {
+            isWinner: true,
+            winnerRank: winnerEntry.rank,
+          },
         }
       );
-      
+
       // Also update individual users in the team
       const teams = await TeamModel.find({
         eventId: event._id,
         $or: [
           { _id: new mongoose.Types.ObjectId(winnerEntry.teamId) },
-          { teamId: winnerEntry.teamId }
-        ]
-      }).populate(['leader', 'members']);
-      
+          { teamId: winnerEntry.teamId },
+        ],
+      }).populate(["leader", "members"]);
+
       for (const team of teams) {
         const userIds = [];
         if (team.leader) userIds.push(team.leader._id);
-        if (team.members) userIds.push(...team.members.map(m => m._id));
-        
+        if (team.members) userIds.push(...team.members.map((m) => m._id));
+
         if (userIds.length > 0) {
-          console.log(`Updating ${userIds.length} users in team ${winnerEntry.teamId} as winners`);
+          console.log(
+            `Updating ${userIds.length} users in team ${winnerEntry.teamId} as winners`
+          );
           await UserModel.updateMany(
             { _id: { $in: userIds } },
             { $set: { isWinner: true } }
@@ -3554,7 +3643,9 @@ const updateEventWinners = catchAsyncError(async (req, res, next) => {
       }
     } else if (winnerEntry.userId) {
       // For individual events, update user directly
-      console.log(`Updating user ${winnerEntry.userId} as winner with rank ${winnerEntry.rank}`);
+      console.log(
+        `Updating user ${winnerEntry.userId} as winner with rank ${winnerEntry.rank}`
+      );
       await UserModel.updateOne(
         { _id: new mongoose.Types.ObjectId(winnerEntry.userId) },
         { $set: { isWinner: true } }
@@ -3563,18 +3654,22 @@ const updateEventWinners = catchAsyncError(async (req, res, next) => {
   }
 
   // Reset non-winners in teams collection for this event
-  const winnerTeamIds = winnersArray.filter(w => w.teamId).map(w => w.teamId);
+  const winnerTeamIds = winnersArray
+    .filter((w) => w.teamId)
+    .map((w) => w.teamId);
   if (winnerTeamIds.length > 0) {
     await TeamModel.updateMany(
-      { 
+      {
         eventId: event._id,
-        _id: { $nin: winnerTeamIds.map(id => new mongoose.Types.ObjectId(id)) }
+        _id: {
+          $nin: winnerTeamIds.map((id) => new mongoose.Types.ObjectId(id)),
+        },
       },
-      { 
-        $set: { 
-          isWinner: false, 
-          winnerRank: null 
-        } 
+      {
+        $set: {
+          isWinner: false,
+          winnerRank: null,
+        },
       }
     );
   }
@@ -4039,31 +4134,38 @@ const getEventParticipants = catchAsyncError(async (req, res, next) => {
     }
 
     // Fetch participants from EventRegistrations collection
-    const participants = await EventRegistration.find({ 
-      eventId: event._id 
-    }).populate('registrantId', 'name email phoneNumber college city dept year level degree gender');
+    const participants = await EventRegistration.find({
+      eventId: event._id,
+    }).populate(
+      "registrantId",
+      "name email phoneNumber college city dept year level degree gender"
+    );
 
-    console.log(`Found ${participants.length} participants for event ${eventId}`);
+    console.log(
+      `Found ${participants.length} participants for event ${eventId}`
+    );
 
     // Transform the data to include registrant information
-    const participantsWithRegistrant = participants.map(participant => ({
+    const participantsWithRegistrant = participants.map((participant) => ({
       ...participant.toObject(),
       userId: participant._id, // Use participant document _id for frontend compatibility
-      registrant: participant.registrantId ? {
-        name: participant.registrantId.name,
-        email: participant.registrantId.email,
-        phoneNumber: participant.registrantId.phoneNumber,
-        college: participant.registrantId.college,
-        city: participant.registrantId.city,
-        dept: participant.registrantId.dept,
-        year: participant.registrantId.year,
-        level: participant.registrantId.level,
-        degree: participant.registrantId.degree,
-        gender: participant.registrantId.gender
-      } : null,
+      registrant: participant.registrantId
+        ? {
+            name: participant.registrantId.name,
+            email: participant.registrantId.email,
+            phoneNumber: participant.registrantId.phoneNumber,
+            college: participant.registrantId.college,
+            city: participant.registrantId.city,
+            dept: participant.registrantId.dept,
+            year: participant.registrantId.year,
+            level: participant.registrantId.level,
+            degree: participant.registrantId.degree,
+            gender: participant.registrantId.gender,
+          }
+        : null,
       // Ensure attendance fields exist (for existing documents that might not have them)
       isPresent: participant.isPresent || false,
-      attendanceMarkedAt: participant.attendanceMarkedAt || null
+      attendanceMarkedAt: participant.attendanceMarkedAt || null,
     }));
 
     res.status(200).json({
@@ -4072,10 +4174,9 @@ const getEventParticipants = catchAsyncError(async (req, res, next) => {
         participants: participantsWithRegistrant,
         totalParticipants: participants.length,
         eventId: eventId,
-        eventName: event.name
-      }
+        eventName: event.name,
+      },
     });
-
   } catch (error) {
     console.error("Error in getEventParticipants:", error);
     return next(new ErrorHandler("Failed to fetch event participants", 500));
@@ -4097,29 +4198,28 @@ const updateAttendance = catchAsyncError(async (req, res, next) => {
     // Update attendance for each participant
     const updatePromises = attendance.map(async (attendanceRecord) => {
       const { userId, isPresent } = attendanceRecord;
-      
+
       try {
         // Convert userId string to ObjectId
         const objectId = new mongoose.Types.ObjectId(userId);
-        
+
         // Update the EventRegistration document by _id
         const updateResult = await EventRegistration.updateOne(
-          { 
-            _id: objectId
+          {
+            _id: objectId,
           },
-          { 
-            $set: { 
+          {
+            $set: {
               isPresent: isPresent,
-              attendanceMarkedAt: new Date()
-            }
+              attendanceMarkedAt: new Date(),
+            },
           },
-          { 
-            upsert: false
+          {
+            upsert: false,
           }
         );
-        
+
         return updateResult;
-        
       } catch (error) {
         console.error(`Error updating attendance for ${userId}:`, error);
         return { matchedCount: 0, modifiedCount: 0, error: error.message };
@@ -4127,9 +4227,13 @@ const updateAttendance = catchAsyncError(async (req, res, next) => {
     });
 
     const results = await Promise.all(updatePromises);
-    const updatedCount = results.filter(result => result.modifiedCount > 0).length;
-    const matchedCount = results.filter(result => result.matchedCount > 0).length;
-    const errorCount = results.filter(result => result.error).length;
+    const updatedCount = results.filter(
+      (result) => result.modifiedCount > 0
+    ).length;
+    const matchedCount = results.filter(
+      (result) => result.matchedCount > 0
+    ).length;
+    const errorCount = results.filter((result) => result.error).length;
 
     res.status(200).json({
       success: true,
@@ -4139,13 +4243,72 @@ const updateAttendance = catchAsyncError(async (req, res, next) => {
         updatedCount: updatedCount,
         matchedCount: matchedCount,
         totalRequested: attendance.length,
-        errorCount: errorCount
-      }
+        errorCount: errorCount,
+      },
     });
-
   } catch (error) {
     console.error("Error in updateAttendance:", error);
     return next(new ErrorHandler("Failed to update attendance", 500));
+  }
+});
+
+// Admin delete team (Admin only - can delete any team including registered ones)
+const adminDeleteTeam = catchAsyncError(async (req, res, next) => {
+  const { teamId } = req.params;
+
+  // Verify team exists
+  const team = await TeamModel.findById(teamId).populate("eventId");
+  if (!team) {
+    return next(new ErrorHandler("Team not found", 404));
+  }
+
+  try {
+    // Start a transaction to ensure atomicity
+    const session = await mongoose.startSession();
+    await session.withTransaction(async () => {
+      // 1. Remove team from event's registered teams array if it exists
+      if (team.eventId && team.isRegistered) {
+        await EventModel.findByIdAndUpdate(
+          team.eventId._id,
+          {
+            $pull: {
+              teams: team._id,
+              registeredTeams: team._id,
+            },
+          },
+          { session }
+        );
+
+        // Also remove from event applications if present
+        await EventModel.findByIdAndUpdate(
+          team.eventId._id,
+          {
+            $pull: {
+              applications: { teamId: team._id },
+            },
+          },
+          { session }
+        );
+      }
+
+      // 2. Delete all pending invites for this team
+      const Invites = require("../models/invites");
+      await Invites.deleteMany({ teamId: team._id }, { session });
+
+      // 3. Remove team references from event registrations
+      await EventRegistration.deleteMany({ teamId: team._id }, { session });
+
+      // 4. Finally delete the team
+      await TeamModel.findByIdAndDelete(teamId, { session });
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Team "${team.teamName}" has been permanently deleted`,
+    });
+  } catch (error) {
+    console.error("Error deleting team:", error);
+    return next(new ErrorHandler("Failed to delete team completely", 500));
   }
 });
 
@@ -4190,4 +4353,5 @@ module.exports = {
   changeAdminPassword,
   getEventParticipants,
   updateAttendance,
+  adminDeleteTeam,
 };
